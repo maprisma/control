@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Maprisma Control
+Comment=Start, stop and test Maprisma from the panel
+Type=Application
+Exec=maprisma-applet
+Terminal=false
+Categories=COSMIC;
+Keywords=COSMIC;Applet;Maprisma;AI;
+Icon=com.maprisma.Maprisma
+NoDisplay=true
+X-CosmicApplet=true
+X-HostWaylandDisplay=true
+X-OverflowPriority=10

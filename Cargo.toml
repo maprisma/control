@@ -1,0 +1,19 @@
+[package]
+name = "maprisma-applet"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "COSMIC panel applet: start, stop and test Maprisma"
+
+[dependencies]
+libc = "0.2"
+
+[dependencies.libcosmic]
+git = "https://github.com/pop-os/libcosmic"
+# The revision COSMIC's own applets (cosmic-applets 1.11) are built against.
+rev = "95236a944bfd51c63a2fc65fe50a592c47168d40"
+default-features = false
+features = ["applet", "applet-token", "dbus-config", "multi-window", "tokio", "wayland", "winit"]
+
+[profile.release]
+lto = "thin"
