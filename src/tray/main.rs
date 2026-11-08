@@ -322,7 +322,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(Mutex::new(initial));
     let (tx, mut rx) = mpsc::unbounded_channel();
     let connection = zbus::connection::Builder::session()?
-        .name("com.maprisma.Control.Tray")?
         .serve_at(
             "/StatusNotifierItem",
             Tray {
@@ -339,6 +338,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?
         .build()
         .await?;
+    // One tray per session: a second one ends here (zbus would otherwise
+    // queue the name request and keep running).
+    if connection.request_name_with_flags("com.maprisma.Control.Tray", zbus::fdo::RequestNameFlags::DoNotQueue.into()).await.is_err() {
+        return Ok(());
+    }
     // Checking the unique owner also handles Plasma starting after us and watcher restarts.
     let watcher_connection = connection.clone();
     tokio::spawn(async move {
