@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Maprisma Control
+Comment=Start, stop and test Maprisma from the system tray
+Type=Application
+Icon=com.maprisma.Maprisma
+Terminal=false
+OnlyShowIn=KDE;

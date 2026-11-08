@@ -11,7 +11,31 @@ bin="$HOME/.local/bin"
 
 cargo build --release
 install -Dm755 target/release/maprisma-applet "$bin/maprisma-applet"
-# The panel starts applets without ~/.local/bin in PATH: the full path.
+install -Dm755 target/release/maprisma-control-tray "$bin/maprisma-control-tray"
+# Exec has two escaping layers: command argument quoting, then desktop value
+# escaping. Percent signs must also be doubled to avoid field-code expansion.
+desktop_exec() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//\$/\\\$}"
+    value="${value//\`/\\\`}"
+    value="${value//\%/%%}"
+    value="${value//\\/\\\\}"
+    printf '"%s"' "$value"
+}
+# The panel starts applets without ~/.local/bin in PATH: the full path, quoted.
 mkdir -p "$data/applications"
-sed "s|^Exec=.*|Exec=$bin/maprisma-applet|" "data/$id.desktop" > "$data/applications/$id.desktop"
+{
+    grep -v '^Exec=' "data/$id.desktop"
+    printf 'Exec=%s\n' "$(desktop_exec "$bin/maprisma-applet")"
+} > "$data/applications/$id.desktop"
 echo "Installed. Add “Maprisma Control” in COSMIC Settings › Desktop › Panel › Applets."
+
+autostart="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+mkdir -p "$autostart"
+{
+    cat data/com.maprisma.Control.Tray.desktop
+    printf 'Exec=%s\n' "$(desktop_exec "$bin/maprisma-control-tray")"
+} > "$autostart/com.maprisma.Control.Tray.desktop"
+echo "Installed KDE tray; it will start at the next Plasma login."

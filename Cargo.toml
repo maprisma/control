@@ -5,7 +5,13 @@ edition = "2024"
 license = "MIT"
 description = "COSMIC panel applet: start, stop and test Maprisma"
 
+[[bin]]
+name = "maprisma-control-tray"
+path = "src/tray/main.rs"
+
 [dependencies]
+zbus = { version = "=5.19.0", default-features = false, features = ["tokio"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 libc = "0.2"
 
 [dependencies.libcosmic]
