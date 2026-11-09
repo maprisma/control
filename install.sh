@@ -2,6 +2,7 @@
 # Build and install the Maprisma panel applet for the current user (no root needed):
 #   ~/.local/bin/maprisma-applet            the applet
 #   ~/.local/share/applications/…desktop           makes it an applet for the panel
+#   ~/.local/share/icons/hicolor/scalable/apps/…svg  the bar icon (its own name; Maprisma's logo)
 # Then add “Maprisma Control” in COSMIC Settings › Desktop › Panel › Applets.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -12,6 +13,9 @@ bin="$HOME/.local/bin"
 cargo build --release
 install -Dm755 target/release/maprisma-applet "$bin/maprisma-applet"
 install -Dm755 target/release/maprisma-control-tray "$bin/maprisma-control-tray"
+# The bar icon (applet and tray) has a name of its own, so it can be changed without touching Maprisma's.
+install -Dm644 "data/icons/$id-symbolic.svg" "$data/icons/hicolor/scalable/apps/$id-symbolic.svg"
+gtk-update-icon-cache -q -t "$data/icons/hicolor" 2>/dev/null || true
 # Exec has two escaping layers: command argument quoting, then desktop value
 # escaping. Percent signs must also be doubled to avoid field-code expansion.
 desktop_exec() {

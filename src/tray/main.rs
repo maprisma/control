@@ -11,7 +11,8 @@ use zbus::{
 type Props = HashMap<String, OwnedValue>;
 type Layout = (i32, Props, Vec<OwnedValue>);
 type Pixmaps = Vec<(i32, i32, Vec<u8>)>;
-const ICON: &str = "com.maprisma.Maprisma";
+/// The tray icon: a name of its own (Maprisma Manager can change it).
+const ICON: &str = "io.github.ubruckhaus.CosmicMaprisma-symbolic";
 struct State {
     running: Option<Running>,
     pending: Option<(Pending, std::time::Instant)>,

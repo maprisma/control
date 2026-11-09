@@ -2,6 +2,6 @@
 Name=Maprisma Control
 Comment=Start, stop and test Maprisma from the system tray
 Type=Application
-Icon=com.maprisma.Maprisma
+Icon=io.github.ubruckhaus.CosmicMaprisma-symbolic
 Terminal=false
 OnlyShowIn=KDE;

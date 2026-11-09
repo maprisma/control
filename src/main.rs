@@ -27,6 +27,9 @@ use cosmic::{Element, theme};
 
 const APP_ID: &str = "io.github.ubruckhaus.CosmicMaprisma";
 const ICON: &str = "com.maprisma.Maprisma";
+/// The bar icon: a name of its own (Maprisma Manager can change it); its default is Maprisma's
+/// coloured logo, so it is drawn in its own colours, not tinted like a symbolic icon.
+const BAR_ICON: &str = "io.github.ubruckhaus.CosmicMaprisma-symbolic";
 const POPUP_WIDTH: f32 = 340.0;
 static AUTOSIZE_ID: LazyLock<Id> = LazyLock::new(|| Id::new("maprisma-autosize"));
 
@@ -136,7 +139,7 @@ impl Control {
 
     fn panel_content(&self) -> Element<'_, Message> {
         let size = self.core.applet.suggested_size(true).0;
-        let logo = icon::from_name(ICON).size(size).icon();
+        let logo = icon::from_name(BAR_ICON).size(size).symbolic(false).icon();
         let line: Element<Message> = match self.status_color() {
             Some(color) => container(space::horizontal())
                 .width(Length::Fixed(size as f32))
