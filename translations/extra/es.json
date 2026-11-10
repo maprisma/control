@@ -19,5 +19,17 @@
   "Start, stop and test Maprisma from the panel": "Iniciar, detener y probar Maprisma desde el panel",
   "Could not save language: {0}": "No se pudo guardar el idioma: {0}",
   "Unknown menu ID": "ID de menú desconocido",
-  "Unknown menu property": "Propiedad de menú desconocida"
+  "Unknown menu property": "Propiedad de menú desconocida",
+  "Screenshot saved": "Captura guardada",
+  "Saved as {0}": "Guardada como {0}",
+  "What is wrong? (optional)": "¿Qué falla? (opcional)",
+  "Done": "Hecho",
+  "F12 saves a screenshot": "F12 guarda una captura de pantalla",
+  "Corners": "Esquinas",
+  "Square": "Rectas",
+  "The screenshot could not be saved: {0}": "No se pudo guardar la captura: {0}",
+  "The note could not be saved: {0}": "No se pudo guardar la nota: {0}",
+  "Like the desktop ({0} px)": "Como el escritorio ({0} px)",
+  "Slightly rounded ({0} px)": "Ligeramente redondeadas ({0} px)",
+  "Rounded ({0} px)": "Redondeadas ({0} px)"
 }

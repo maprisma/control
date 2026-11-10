@@ -7,6 +7,11 @@
 // a Maprisma started from the launcher or a terminal.
 
 use maprisma_applet::*;
+mod corners;
+mod shot;
+mod shot_files;
+use corners::{Corners, Look};
+use shot::{Shot, ShotMsg};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -31,6 +36,8 @@ const ICON: &str = "com.maprisma.Maprisma";
 /// coloured logo, so it is drawn in its own colours, not tinted like a symbolic icon.
 const BAR_ICON: &str = "io.github.ubruckhaus.CosmicMaprisma-symbolic";
 const POPUP_WIDTH: f32 = 340.0;
+/// F12's folder in ~/Pictures and (as a slug) its file names.
+const SHOT_FOLDER: &str = "Maprisma Control";
 static AUTOSIZE_ID: LazyLock<Id> = LazyLock::new(|| Id::new("maprisma-autosize"));
 
 fn main() -> cosmic::iced::Result {
@@ -102,6 +109,10 @@ struct Control {
     running: Option<Running>,
     pending: Option<(Pending, Instant)>,
     version: String,
+    shot: Shot,
+    look: Look,
+    corners: Corners,
+    screenshot_key: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +129,9 @@ enum Message {
     OpenFolder,
     OpenNotes,
     Language(usize),
+    Shot(ShotMsg),
+    ScreenshotKey,
+    Corners(usize),
 }
 
 impl Control {
@@ -128,6 +142,19 @@ impl Control {
     fn refresh(&mut self) {
         self.running = scan();
         settle_pending(&self.running, &mut self.pending);
+    }
+
+    // Settings › F12 saves a screenshot (on unless `screenshot_key=false`) and › Corners, read
+    // again on every tick: another Control (window or applet) may have changed them.
+    fn read_look(&mut self) -> Task<Message> {
+        self.screenshot_key = i18n::setting("screenshot_key").as_deref() != Some("false");
+        self.corners = Corners::parse(&i18n::setting("corners").unwrap_or_default());
+        self.look.apply(&self.core, self.corners)
+    }
+
+    // F12 may take the open popup, or the window of `--window`; not the panel button.
+    fn shot_target(&self, id: window::Id) -> bool {
+        self.popup == Some(id) || (self.standalone && self.core.main_window_id() == Some(id))
     }
 
     fn status_color(&self) -> Option<Color> {
@@ -174,7 +201,7 @@ impl Control {
             .class(fill(
                 self.status_color()
                     .unwrap_or(Color::from_rgba(0.5, 0.5, 0.5, 0.5)),
-                4.0,
+                corners::current(&cosmic::theme::active()).pill.min(4.0),
             ));
         let header = row![
             icon::from_name(ICON).size(32).icon(),
@@ -237,6 +264,26 @@ impl Control {
             let label = if i18n::CODES[index] == preference { format!("✓ {label}") } else { label };
             actions = actions.push(menu_button(text::body(label)).on_press(Message::Language(index)));
         }
+        let check = |on: bool, label: String| if on { format!("✓ {label}") } else { label };
+        actions = actions
+            .push(divider::horizontal::default())
+            .push(
+                menu_button(text::body(check(self.screenshot_key, tr("F12 saves a screenshot"))))
+                    .on_press(Message::ScreenshotKey),
+            )
+            .push(text::body(tr("Corners")));
+        let desktop = self.look.desktop().round().to_string();
+        let labels = [
+            trf("Like the desktop ({0} px)", &[&desktop]),
+            trf("Slightly rounded ({0} px)", &["6"]),
+            trf("Rounded ({0} px)", &["12"]),
+            tr("Square"),
+        ];
+        for (index, label) in labels.into_iter().enumerate() {
+            actions = actions.push(
+                menu_button(text::body(check(self.corners.index() == index, label))).on_press(Message::Corners(index)),
+            );
+        }
         if let Some(error) = &self.error {
             actions = actions.push(text::body(error.clone()));
         }
@@ -246,9 +293,20 @@ impl Control {
             .into()
     }
 
+    // The F12 note card above the menu while it is asked for.
+    fn with_card<'a>(&'a self, id: window::Id, content: Element<'a, Message>) -> Element<'a, Message> {
+        match self.shot.card(id, Message::Shot) {
+            Some(card) => column![card, content].width(Length::Fixed(POPUP_WIDTH)).into(),
+            None => content,
+        }
+    }
+
     fn close_popup(&mut self) -> Task<Message> {
         match self.popup.take() {
-            Some(popup) => destroy_popup(popup),
+            Some(popup) => {
+                self.shot.closed(popup);
+                destroy_popup(popup)
+            }
             None => Task::none(),
         }
     }
@@ -273,14 +331,16 @@ impl cosmic::Application for Control {
             core,
             standalone,
             version: version(),
+            shot: Shot::new(SHOT_FOLDER),
             ..Default::default()
         };
         control.refresh();
+        let look = control.read_look();
         let task = if standalone {
             control.set_header_title(tr("Maprisma Control"));
             control.set_window_title(tr("Maprisma Control"), control.core.main_window_id().unwrap())
         } else { Task::none() };
-        (control, task)
+        (control, Task::batch([look, task]))
     }
 
     fn on_close_requested(&self, id: window::Id) -> Option<Message> {
@@ -297,6 +357,7 @@ impl cosmic::Application for Control {
         Subscription::batch(vec![
             rectangle_tracker_subscription(0).map(|update| Message::Rectangle(update.1)),
             cosmic::iced::time::every(every).map(|_| Message::Tick),
+            Shot::subscription().map(Message::Shot),
         ])
     }
 
@@ -310,12 +371,35 @@ impl cosmic::Application for Control {
                     return self.set_window_title(tr("Maprisma Control"), self.core.main_window_id().unwrap());
                 }
             }
-            Message::Tick => self.refresh(),
+            Message::Tick => {
+                self.refresh();
+                return self.read_look();
+            }
+            Message::Shot(message) => {
+                let ours = match &message {
+                    ShotMsg::Key(id) => self.shot_target(*id),
+                    _ => true,
+                };
+                return self.shot.update(message, self.screenshot_key, ours, Message::Shot);
+            }
+            Message::ScreenshotKey => {
+                let on = !self.screenshot_key;
+                self.error = i18n::set_setting("screenshot_key", if on { "true" } else { "false" })
+                    .err()
+                    .map(|error| error.to_string());
+                return self.read_look();
+            }
+            Message::Corners(index) => {
+                let corners = corners::ALL.get(index).copied().unwrap_or_default();
+                self.error = i18n::set_setting("corners", corners.key()).err().map(|error| error.to_string());
+                return self.read_look();
+            }
             Message::Rectangle(update) => match update {
                 RectangleUpdate::Rectangle(r) => self.rectangle = r.1,
                 RectangleUpdate::Init(tracker) => self.tracker = Some(tracker),
             },
             Message::CloseRequested(id) => {
+                self.shot.closed(id);
                 if self.popup == Some(id) {
                     self.popup = None;
                 }
@@ -388,7 +472,8 @@ impl cosmic::Application for Control {
 
     fn view(&self) -> Element<'_, Message> {
         if self.standalone {
-            return cosmic::widget::scrollable(self.menu()).into();
+            let id = self.core.main_window_id().unwrap_or(window::Id::RESERVED);
+            return cosmic::widget::scrollable(self.with_card(id, self.menu())).into();
         }
         let horizontal = matches!(
             self.core.applet.anchor,
@@ -412,8 +497,12 @@ impl cosmic::Application for Control {
         autosize::autosize(content, AUTOSIZE_ID.clone()).into()
     }
 
-    fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
-        self.core.applet.popup_container(self.menu()).into()
+    fn view_window(&self, id: window::Id) -> Element<'_, Message> {
+        self.core.applet.popup_container(self.with_card(id, self.menu())).into()
+    }
+
+    fn system_theme_update(&mut self, _keys: &[&'static str], _theme: &cosmic::cosmic_theme::Theme) -> Task<Message> {
+        self.look.apply(&self.core, self.corners)
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {

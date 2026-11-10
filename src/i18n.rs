@@ -24,9 +24,21 @@ pub fn preference() -> String {
     preference_at(&config_path())
 }
 fn preference_at(path: &std::path::Path) -> String {
+    setting_at(path, "language").filter(|s| CODES.contains(&s.as_str())).unwrap_or_else(|| "auto".into())
+}
+/// A `key=value` line of the settings file (the last one wins).
+pub fn setting(key: &str) -> Option<String> {
+    setting_at(&config_path(), key)
+}
+fn setting_at(path: &std::path::Path, key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
     std::fs::read_to_string(path).ok().and_then(|s| {
-        s.lines().find_map(|line| line.strip_prefix("language=").map(str::to_owned))
-    }).filter(|s| CODES.contains(&s.as_str())).unwrap_or_else(|| "auto".into())
+        s.lines().filter_map(|line| line.strip_prefix(prefix.as_str()).map(str::to_owned)).last()
+    })
+}
+/// Writes `key=value`, keeping the other settings.
+pub fn set_setting(key: &str, value: &str) -> std::io::Result<()> {
+    save_setting(&config_path(), key, value)
 }
 fn language() -> String {
     let preference = preference();
@@ -37,10 +49,14 @@ pub fn set_language(index: usize) -> std::io::Result<()> {
 }
 fn save_language(path: &std::path::Path, index: usize) -> std::io::Result<()> {
     let Some(code) = CODES.get(index) else { return Ok(()) };
+    save_setting(path, "language", code)
+}
+fn save_setting(path: &std::path::Path, key: &str, value: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(path.parent().unwrap())?;
     let old = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut lines: Vec<_> = old.lines().filter(|l| !l.starts_with("language=")).map(str::to_owned).collect();
-    lines.push(format!("language={code}"));
+    let prefix = format!("{key}=");
+    let mut lines: Vec<_> = old.lines().filter(|l| !l.starts_with(prefix.as_str())).map(str::to_owned).collect();
+    lines.push(format!("{key}={value}"));
     // Same-directory rename keeps readers from seeing a partial setting.
     let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
     std::fs::write(&temporary, lines.join("\n") + "\n")?;
@@ -106,6 +122,12 @@ mod tests {
             assert_eq!(preference_at(&path), *code);
             assert!(std::fs::read_to_string(&path).unwrap().contains("other=value"));
         }
+        save_setting(&path, "corners", "square").unwrap();
+        save_setting(&path, "screenshot_key", "false").unwrap();
+        assert_eq!(setting_at(&path, "corners").as_deref(), Some("square"));
+        assert_eq!(setting_at(&path, "screenshot_key").as_deref(), Some("false"));
+        assert_eq!(preference_at(&path), "pl");
+        assert!(std::fs::read_to_string(&path).unwrap().contains("other=value"));
         assert_eq!(generated::lookup("en", "Language"), None);
         assert_eq!(generated::lookup("de", "Language"), Some("Sprache"));
         assert_eq!(generated::lookup("de", "Uncatalogued"), None);

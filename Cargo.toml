@@ -1,6 +1,6 @@
 [package]
 name = "maprisma-applet"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "COSMIC panel applet: start, stop and test Maprisma"
@@ -13,6 +13,7 @@ path = "src/tray/main.rs"
 zbus = { version = "=5.19.0", default-features = false, features = ["tokio"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 libc = "0.2"
+png = "0.18"
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"

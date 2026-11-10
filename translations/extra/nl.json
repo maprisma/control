@@ -19,5 +19,17 @@
   "Start, stop and test Maprisma from the panel": "Maprisma starten, stoppen en testen vanuit het paneel",
   "Could not save language: {0}": "Kan de taal niet opslaan: {0}",
   "Unknown menu ID": "Onbekende menu-ID",
-  "Unknown menu property": "Onbekende menu-eigenschap"
+  "Unknown menu property": "Onbekende menu-eigenschap",
+  "Screenshot saved": "Schermafbeelding bewaard",
+  "Saved as {0}": "Bewaard als {0}",
+  "What is wrong? (optional)": "Wat is er mis? (optioneel)",
+  "Done": "Klaar",
+  "F12 saves a screenshot": "F12 bewaart een schermafbeelding",
+  "Corners": "Hoeken",
+  "Square": "Hoekig",
+  "The screenshot could not be saved: {0}": "De schermafbeelding kon niet worden bewaard: {0}",
+  "The note could not be saved: {0}": "De notitie kon niet worden bewaard: {0}",
+  "Like the desktop ({0} px)": "Zoals het bureaublad ({0} px)",
+  "Slightly rounded ({0} px)": "Licht afgerond ({0} px)",
+  "Rounded ({0} px)": "Afgerond ({0} px)"
 }
