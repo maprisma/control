@@ -10,7 +10,6 @@ use maprisma_applet::*;
 mod corners;
 mod shot;
 mod shot_files;
-use corners::{Corners, Look};
 use shot::{Shot, ShotMsg};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
@@ -110,8 +109,7 @@ struct Control {
     pending: Option<(Pending, Instant)>,
     version: String,
     shot: Shot,
-    look: Look,
-    corners: Corners,
+    corners: String, // Settings › Corners (corners.rs)
     screenshot_key: bool,
 }
 
@@ -148,8 +146,9 @@ impl Control {
     // again on every tick: another Control (window or applet) may have changed them.
     fn read_look(&mut self) -> Task<Message> {
         self.screenshot_key = i18n::setting("screenshot_key").as_deref() != Some("false");
-        self.corners = Corners::parse(&i18n::setting("corners").unwrap_or_default());
-        self.look.apply(&self.core, self.corners)
+        self.corners = corners::normalize(&i18n::setting("corners").unwrap_or_default()).to_string();
+        corners::set_current(&self.corners);
+        Task::none()
     }
 
     // F12 may take the open popup, or the window of `--window`; not the panel button.
@@ -201,7 +200,7 @@ impl Control {
             .class(fill(
                 self.status_color()
                     .unwrap_or(Color::from_rgba(0.5, 0.5, 0.5, 0.5)),
-                corners::current(&cosmic::theme::active()).pill.min(4.0),
+                corners::now().pill.min(4.0),
             ));
         let header = row![
             icon::from_name(ICON).size(32).icon(),
@@ -272,7 +271,7 @@ impl Control {
                     .on_press(Message::ScreenshotKey),
             )
             .push(text::body(tr("Corners")));
-        let desktop = self.look.desktop().round().to_string();
+        let desktop = corners::desktop_radius().round().to_string();
         let labels = [
             trf("Like the desktop ({0} px)", &[&desktop]),
             trf("Slightly rounded ({0} px)", &["6"]),
@@ -281,7 +280,7 @@ impl Control {
         ];
         for (index, label) in labels.into_iter().enumerate() {
             actions = actions.push(
-                menu_button(text::body(check(self.corners.index() == index, label))).on_press(Message::Corners(index)),
+                menu_button(text::body(check(corners::CHOICES.iter().position(|c| *c == self.corners).unwrap_or(0) == index, label))).on_press(Message::Corners(index)),
             );
         }
         if let Some(error) = &self.error {
@@ -390,8 +389,8 @@ impl cosmic::Application for Control {
                 return self.read_look();
             }
             Message::Corners(index) => {
-                let corners = corners::ALL.get(index).copied().unwrap_or_default();
-                self.error = i18n::set_setting("corners", corners.key()).err().map(|error| error.to_string());
+                let corners = corners::CHOICES.get(index).copied().unwrap_or("desktop");
+                self.error = i18n::set_setting("corners", corners).err().map(|error| error.to_string());
                 return self.read_look();
             }
             Message::Rectangle(update) => match update {
@@ -473,7 +472,7 @@ impl cosmic::Application for Control {
     fn view(&self) -> Element<'_, Message> {
         if self.standalone {
             let id = self.core.main_window_id().unwrap_or(window::Id::RESERVED);
-            return cosmic::widget::scrollable(self.with_card(id, self.menu())).into();
+            return corners::apply(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.menu())));
         }
         let horizontal = matches!(
             self.core.applet.anchor,
@@ -498,11 +497,7 @@ impl cosmic::Application for Control {
     }
 
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
-        self.core.applet.popup_container(self.with_card(id, self.menu())).into()
-    }
-
-    fn system_theme_update(&mut self, _keys: &[&'static str], _theme: &cosmic::cosmic_theme::Theme) -> Task<Message> {
-        self.look.apply(&self.core, self.corners)
+        corners::apply(&self.corners, self.core.applet.popup_container(self.with_card(id, self.menu())))
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
