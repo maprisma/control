@@ -1,0 +1,23 @@
+{
+  "Starting…": "Starten…",
+  "Stopping…": "Bezig met stoppen…",
+  "Stopped": "Gestopt",
+  "Running since {0}": "Actief sinds {0}",
+  "Test session running since {0}": "Testsessie actief sinds {0}",
+  "Recording into {0}": "Opname in {0}",
+  "F12 in Maprisma: a screenshot with a note. Stop or close it to finish.": "F12 in Maprisma: een schermafbeelding met een notitie. Stop of sluit af om te voltooien.",
+  "Show / hide window": "Venster tonen / verbergen",
+  "Stop Maprisma": "Maprisma stoppen",
+  "Start Maprisma": "Maprisma starten",
+  "Start a recorded test session": "Een opgenomen testsessie starten",
+  "Open notes of the last test": "Notities van de laatste test openen",
+  "Open the test folder": "Testmap openen",
+  "Language": "Taal",
+  "System ({0})": "Systeem ({0})",
+  "Maprisma Control": "Maprisma-bediening",
+  "Start, stop and test Maprisma from the system tray": "Maprisma starten, stoppen en testen vanuit het systeemvak",
+  "Start, stop and test Maprisma from the panel": "Maprisma starten, stoppen en testen vanuit het paneel",
+  "Could not save language: {0}": "Kan de taal niet opslaan: {0}",
+  "Unknown menu ID": "Onbekende menu-ID",
+  "Unknown menu property": "Onbekende menu-eigenschap"
+}

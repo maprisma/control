@@ -23,7 +23,7 @@ use cosmic::widget::rectangle_tracker::{
 use cosmic::widget::{
     Id, autosize, button, column, container, divider, icon, mouse_area, row, space, text,
 };
-use cosmic::{Element, theme};
+use cosmic::{ApplicationExt, Element, theme};
 
 const APP_ID: &str = "io.github.ubruckhaus.CosmicMaprisma";
 const ICON: &str = "com.maprisma.Maprisma";
@@ -34,7 +34,13 @@ const POPUP_WIDTH: f32 = 340.0;
 static AUTOSIZE_ID: LazyLock<Id> = LazyLock::new(|| Id::new("maprisma-autosize"));
 
 fn main() -> cosmic::iced::Result {
-    cosmic::applet::run::<Control>(())
+    if std::env::args().any(|arg| arg == "--window") {
+        cosmic::app::run::<Control>(
+            cosmic::app::Settings::default()
+                .size(cosmic::iced::Size::new(420.0, 740.0)), true)
+    } else {
+        cosmic::applet::run::<Control>(false)
+    }
 }
 
 // ------------------------------------------------------------------------- processes
@@ -88,6 +94,8 @@ const AMBER: Color = Color::from_rgb(
 #[derive(Default)]
 struct Control {
     core: Core,
+    standalone: bool,
+    error: Option<String>,
     popup: Option<window::Id>,
     rectangle: Rectangle,
     tracker: Option<RectangleTracker<u32>>,
@@ -109,6 +117,7 @@ enum Message {
     ToggleWindow,
     OpenFolder,
     OpenNotes,
+    Language(usize),
 }
 
 impl Control {
@@ -181,9 +190,9 @@ impl Control {
         .align_y(Alignment::Center);
         let mut info = column![header].spacing(6);
         if let Some(dir) = self.running.as_ref().and_then(|r| r.recording.as_ref()) {
-            info = info.push(dim(format!("Recording into {}", dir.display())));
+            info = info.push(dim(trf("Recording into {0}", &[&dir.display().to_string()])));
             info = info.push(dim(
-                "F12 in Maprisma: a screenshot with a note. Stop or close it to finish.",
+                tr("F12 in Maprisma: a screenshot with a note. Stop or close it to finish."),
             ));
         }
 
@@ -194,21 +203,21 @@ impl Control {
         if running {
             actions = actions
                 .push(
-                    menu_button(text::body("Show / hide window"))
+                    menu_button(text::body(tr("Show / hide window")))
                         .on_press_maybe(idle.then_some(Message::ToggleWindow)),
                 )
                 .push(
-                    menu_button(text::body("Stop Maprisma"))
+                    menu_button(text::body(tr("Stop Maprisma")))
                         .on_press_maybe(idle.then_some(Message::Stop)),
                 );
         } else {
             actions = actions
                 .push(
-                    menu_button(text::body("Start Maprisma"))
+                    menu_button(text::body(tr("Start Maprisma")))
                         .on_press_maybe(idle.then_some(Message::Start)),
                 )
                 .push(
-                    menu_button(text::body("Start a recorded test session")).on_press_maybe(
+                    menu_button(text::body(tr("Start a recorded test session"))).on_press_maybe(
                         (idle && test_dir().join("start.sh").is_file())
                             .then_some(Message::StartRecorded),
                     ),
@@ -217,11 +226,20 @@ impl Control {
         actions = actions
             .push(divider::horizontal::default())
             .push(
-                menu_button(text::body("Open notes of the last test"))
+                menu_button(text::body(tr("Open notes of the last test")))
                     .on_press_maybe(has_run.then_some(Message::OpenNotes)),
             )
-            .push(menu_button(text::body("Open the test folder")).on_press(Message::OpenFolder));
+            .push(menu_button(text::body(tr("Open the test folder"))).on_press(Message::OpenFolder));
 
+        actions = actions.push(divider::horizontal::default()).push(text::body(tr("Language")));
+        let preference = i18n::preference();
+        for (index, label) in language_options().into_iter().enumerate() {
+            let label = if i18n::CODES[index] == preference { format!("✓ {label}") } else { label };
+            actions = actions.push(menu_button(text::body(label)).on_press(Message::Language(index)));
+        }
+        if let Some(error) = &self.error {
+            actions = actions.push(text::body(error.clone()));
+        }
         column![padded_control(info).padding([12, 16]), actions]
             .width(Length::Fixed(POPUP_WIDTH))
             .padding([0, 0, 8, 0])
@@ -238,7 +256,7 @@ impl Control {
 
 impl cosmic::Application for Control {
     type Executor = cosmic::SingleThreadExecutor;
-    type Flags = ();
+    type Flags = bool;
     type Message = Message;
     const APP_ID: &'static str = APP_ID;
 
@@ -250,14 +268,19 @@ impl cosmic::Application for Control {
         &mut self.core
     }
 
-    fn init(core: Core, _flags: ()) -> (Self, Task<Message>) {
+    fn init(core: Core, standalone: bool) -> (Self, Task<Message>) {
         let mut control = Self {
             core,
+            standalone,
             version: version(),
             ..Default::default()
         };
         control.refresh();
-        (control, Task::none())
+        let task = if standalone {
+            control.set_header_title(tr("Maprisma Control"));
+            control.set_window_title(tr("Maprisma Control"), control.core.main_window_id().unwrap())
+        } else { Task::none() };
+        (control, task)
     }
 
     fn on_close_requested(&self, id: window::Id) -> Option<Message> {
@@ -279,6 +302,14 @@ impl cosmic::Application for Control {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::Language(index) => {
+                self.error = i18n::set_language(index).err().map(|error|
+                    trf("Could not save language: {0}", &[&error.to_string()]));
+                if self.standalone {
+                    self.set_header_title(tr("Maprisma Control"));
+                    return self.set_window_title(tr("Maprisma Control"), self.core.main_window_id().unwrap());
+                }
+            }
             Message::Tick => self.refresh(),
             Message::Rectangle(update) => match update {
                 RectangleUpdate::Rectangle(r) => self.rectangle = r.1,
@@ -356,6 +387,9 @@ impl cosmic::Application for Control {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        if self.standalone {
+            return cosmic::widget::scrollable(self.menu()).into();
+        }
         let horizontal = matches!(
             self.core.applet.anchor,
             PanelAnchor::Top | PanelAnchor::Bottom

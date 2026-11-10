@@ -1,6 +1,20 @@
 [Desktop Entry]
 Name=Maprisma Control
+Name[de]=Maprisma-Steuerung
+Name[fr]=Contrôle de Maprisma
+Name[es]=Control de Maprisma
+Name[it]=Controllo Maprisma
+Name[pt]=Controlo do Maprisma
+Name[nl]=Maprisma-bediening
+Name[pl]=Sterowanie Maprisma
 Comment=Start, stop and test Maprisma from the panel
+Comment[de]=Maprisma über das Panel starten, stoppen und testen
+Comment[fr]=Démarrer, arrêter et tester Maprisma depuis le panneau
+Comment[es]=Iniciar, detener y probar Maprisma desde el panel
+Comment[it]=Avvia, arresta e prova Maprisma dal pannello
+Comment[pt]=Iniciar, parar e testar o Maprisma a partir do painel
+Comment[nl]=Maprisma starten, stoppen en testen vanuit het paneel
+Comment[pl]=Uruchamiaj, zatrzymuj i testuj Maprisma z panelu
 Type=Application
 Exec=maprisma-applet
 Terminal=false

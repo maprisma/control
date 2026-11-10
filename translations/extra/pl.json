@@ -1,0 +1,23 @@
+{
+  "Starting…": "Uruchamianie…",
+  "Stopping…": "Zatrzymywanie…",
+  "Stopped": "Zatrzymano",
+  "Running since {0}": "Działa od {0}",
+  "Test session running since {0}": "Sesja testowa działa od {0}",
+  "Recording into {0}": "Zapisywanie w {0}",
+  "F12 in Maprisma: a screenshot with a note. Stop or close it to finish.": "F12 w Maprisma: zrzut ekranu z notatką. Zatrzymaj lub zamknij, aby zakończyć.",
+  "Show / hide window": "Pokaż / ukryj okno",
+  "Stop Maprisma": "Zatrzymaj Maprisma",
+  "Start Maprisma": "Uruchom Maprisma",
+  "Start a recorded test session": "Uruchom nagrywaną sesję testową",
+  "Open notes of the last test": "Otwórz notatki z ostatniego testu",
+  "Open the test folder": "Otwórz folder testowy",
+  "Language": "Język",
+  "System ({0})": "System ({0})",
+  "Maprisma Control": "Sterowanie Maprisma",
+  "Start, stop and test Maprisma from the system tray": "Uruchamiaj, zatrzymuj i testuj Maprisma z zasobnika systemowego",
+  "Start, stop and test Maprisma from the panel": "Uruchamiaj, zatrzymuj i testuj Maprisma z panelu",
+  "Could not save language: {0}": "Nie można zapisać języka: {0}",
+  "Unknown menu ID": "Nieznany identyfikator menu",
+  "Unknown menu property": "Nieznana właściwość menu"
+}

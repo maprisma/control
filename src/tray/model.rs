@@ -1,4 +1,4 @@
-use maprisma_applet::{Action, Pending, Running, status_text};
+use maprisma_applet::{Action, Pending, Running, status_text, tr, trf, language_options};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Item {
     pub id: i32,
@@ -60,13 +60,13 @@ pub fn menu(
     if let Some(dir) = running.as_ref().and_then(|r| r.recording.as_ref()) {
         items.push(Item::new(
             3,
-            format!("Recording into {}", dir.display()),
+            trf("Recording into {0}", &[&dir.display().to_string()]),
             false,
             None,
         ));
         items.push(Item::new(
             4,
-            "F12 in Maprisma: a screenshot with a note. Stop or close it to finish.",
+            tr("F12 in Maprisma: a screenshot with a note. Stop or close it to finish."),
             false,
             None,
         ));
@@ -78,16 +78,16 @@ pub fn menu(
     if running.is_some() {
         items.push(Item::new(
             6,
-            "Show / hide window",
+            tr("Show / hide window"),
             idle,
             Some(Action::ToggleWindow),
         ));
-        items.push(Item::new(7, "Stop Maprisma", idle, Some(Action::Stop)));
+        items.push(Item::new(7, tr("Stop Maprisma"), idle, Some(Action::Stop)));
     } else {
-        items.push(Item::new(8, "Start Maprisma", idle, Some(Action::Start)));
+        items.push(Item::new(8, tr("Start Maprisma"), idle, Some(Action::Start)));
         items.push(Item::new(
             9,
-            "Start a recorded test session",
+            tr("Start a recorded test session"),
             idle && has_script,
             Some(Action::StartRecorded),
         ));
@@ -97,16 +97,23 @@ pub fn menu(
     items.push(sep);
     items.push(Item::new(
         11,
-        "Open notes of the last test",
+        tr("Open notes of the last test"),
         has_run,
         Some(Action::OpenNotes),
     ));
     items.push(Item::new(
         12,
-        "Open the test folder",
+        tr("Open the test folder"),
         true,
         Some(Action::OpenFolder),
     ));
+    let mut languages = Item::new(20, tr("Language"), true, None);
+    let preference = maprisma_applet::i18n::preference();
+    languages.children = language_options().into_iter().enumerate().map(|(index, label)| {
+        let label = if maprisma_applet::i18n::CODES[index] == preference { format!("✓ {label}") } else { label };
+        Item::new(100 + index as i32, label, true, Some(Action::Language(index)))
+    }).collect();
+    items.push(languages);
     let mut root = Item::new(0, "", true, None);
     root.children = items;
     root

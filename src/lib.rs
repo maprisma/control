@@ -1,3 +1,5 @@
+pub mod i18n;
+pub use i18n::{tr, trf, language_options};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -185,6 +187,7 @@ pub enum Action {
     OpenFolder,
     OpenNotes,
     Activate,
+    Language(usize),
 }
 
 pub fn execute(
@@ -193,6 +196,7 @@ pub fn execute(
     pending: &mut Option<(Pending, Instant)>,
 ) {
     match action {
+        Action::Language(index) => { if let Err(error) = i18n::set_language(index) { eprintln!("{}", trf("Could not save language: {0}", &[&error.to_string()])); } },
         Action::Activate => {
             if pending.is_none() {
                 execute(
@@ -257,13 +261,13 @@ pub fn settle_pending(running: &Option<Running>, pending: &mut Option<(Pending, 
 }
 pub fn status_text(running: &Option<Running>, pending: Option<Pending>) -> String {
     match (pending, running) {
-        (Some(Pending::Starting), _) => "Starting…".into(),
-        (Some(Pending::Stopping), _) => "Stopping…".into(),
+        (Some(Pending::Starting), _) => tr("Starting…"),
+        (Some(Pending::Stopping), _) => tr("Stopping…"),
         (None, Some(r)) if r.recording.is_some() => {
-            format!("Test session running since {}", clock(r.since))
+            trf("Test session running since {0}", &[&clock(r.since)])
         }
-        (None, Some(r)) => format!("Running since {}", clock(r.since)),
-        (None, None) => "Stopped".into(),
+        (None, Some(r)) => trf("Running since {0}", &[&clock(r.since)]),
+        (None, None) => tr("Stopped"),
     }
 }
 
@@ -292,19 +296,19 @@ mod tests {
     }
     #[test]
     fn statuses_and_pending_action_guard() {
-        assert_eq!(status_text(&None, None), "Stopped");
-        assert_eq!(status_text(&None, Some(Pending::Starting)), "Starting…");
-        assert_eq!(status_text(&None, Some(Pending::Stopping)), "Stopping…");
+        assert_eq!(status_text(&None, None), tr("Stopped"));
+        assert_eq!(status_text(&None, Some(Pending::Starting)), tr("Starting…"));
+        assert_eq!(status_text(&None, Some(Pending::Stopping)), tr("Stopping…"));
         let r = Some(Running {
             since: 1,
             ..Default::default()
         });
-        assert_eq!(status_text(&r, None), format!("Running since {}", clock(1)));
+        assert_eq!(status_text(&r, None), trf("Running since {0}", &[&clock(1)]));
         let r = Some(Running {
             recording: Some("/tmp/run".into()),
             ..r.unwrap()
         });
-        assert!(status_text(&r, None).starts_with("Test session running since "));
+        assert_eq!(status_text(&r, None), trf("Test session running since {0}", &[&clock(1)]));
         let mut pending = Some((Pending::Stopping, Instant::now()));
         let original = pending;
         execute(Action::Start, &None, &mut pending);

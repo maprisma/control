@@ -18,6 +18,7 @@ struct State {
     pending: Option<(Pending, std::time::Instant)>,
     menu: model::Item,
     revision: u32,
+    error: Option<String>,
 }
 impl State {
     fn refresh(&mut self) {
@@ -30,6 +31,16 @@ impl State {
             last_run().is_some(),
             test_dir().join("start.sh").is_file(),
         );
+        self.append_error();
+    }
+    fn append_error(&mut self) {
+        self.menu.children.retain(|item| item.id != 21);
+        if let Some(error) = &self.error {
+            self.menu.children.push(model::Item {
+                id: 21, label: error.clone(), enabled: false, separator: false,
+                children: vec![], action: None,
+            });
+        }
     }
     fn status(&self) -> &'static str {
         model::status(&self.running)
@@ -127,7 +138,7 @@ impl Menu {
         let menu = s.menu.clone();
         let item = menu
             .find(parent_id)
-            .ok_or_else(|| zbus::fdo::Error::InvalidArgs("Unknown menu ID".into()))?;
+            .ok_or_else(|| zbus::fdo::Error::InvalidArgs(tr("Unknown menu ID")))?;
         Ok((s.revision, layout(item, recursion_depth, &property_names)))
     }
     async fn get_group_properties(
@@ -149,7 +160,7 @@ impl Menu {
         let menu = s.menu.clone();
         menu.find(id)
             .and_then(|i| properties(i, &[]).remove(&name))
-            .ok_or_else(|| zbus::fdo::Error::InvalidArgs("Unknown menu property".into()))
+            .ok_or_else(|| zbus::fdo::Error::InvalidArgs(tr("Unknown menu property")))
     }
     async fn event(&self, id: i32, event_id: String, _data: OwnedValue, _timestamp: u32) {
         self.dispatch(id, &event_id).await;
@@ -198,8 +209,8 @@ impl Tray {
         "maprisma-control"
     }
     #[zbus(property)]
-    fn title(&self) -> &str {
-        "Maprisma Control"
+    fn title(&self) -> String {
+        tr("Maprisma Control")
     }
     #[zbus(property)]
     async fn status(&self) -> &str {
@@ -242,7 +253,7 @@ impl Tray {
         (
             ICON.into(),
             vec![],
-            "Maprisma Control".into(),
+            tr("Maprisma Control"),
             self.state.lock().await.tooltip(),
         )
     }
@@ -279,7 +290,12 @@ async fn publish(
     s.refresh();
     if let Some(action) = action {
         let running = s.running.clone();
-        execute(action, &running, &mut s.pending);
+        if let Action::Language(index) = action {
+            s.error = i18n::set_language(index).err().map(|error|
+                trf("Could not save language: {0}", &[&error.to_string()]));
+        } else {
+            execute(action, &running, &mut s.pending);
+        }
         s.menu = model::menu(
             &s.running,
             s.pending.map(|p| p.0),
@@ -288,6 +304,7 @@ async fn publish(
             test_dir().join("start.sh").is_file(),
         );
     }
+    s.append_error();
     let changed = before != s.menu;
     if changed {
         s.revision = s.revision.wrapping_add(1);
@@ -318,6 +335,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pending: None,
         menu: model::menu(&None, None, "", false, false),
         revision: 1,
+        error: None,
     };
     initial.refresh();
     let state = Arc::new(Mutex::new(initial));
@@ -421,6 +439,7 @@ mod tests {
             pending: None,
             menu: model::menu(&None, None, "", false, true),
             revision: 1,
+            error: None,
         }));
         let (tx, mut rx) = mpsc::unbounded_channel();
         let menu = Menu {
