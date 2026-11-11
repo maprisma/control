@@ -18,4 +18,4 @@ Comment[pl]=Uruchamiaj, zatrzymuj i testuj Maprisma z zasobnika systemowego
 Type=Application
 Icon=io.github.ubruckhaus.CosmicMaprisma-symbolic
 Terminal=false
-OnlyShowIn=KDE;
+OnlyShowIn=KDE;Hyprland;

@@ -32,5 +32,5 @@ fn desktop_exec_quotes_both_layers_and_percent_codes() {
     let decoded = unescape(&argument[1..argument.len() - 1]).replace("%%", "%");
     assert_eq!(decoded, path);
     assert!(encoded.contains("%%"));
-    assert!(include_str!("../data/com.maprisma.Control.Tray.desktop").contains("OnlyShowIn=KDE;"));
+    assert!(include_str!("../data/com.maprisma.Control.Tray.desktop").contains("OnlyShowIn=KDE;Hyprland;"));
 }

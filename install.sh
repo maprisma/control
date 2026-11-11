@@ -42,4 +42,4 @@ mkdir -p "$autostart"
     cat data/com.maprisma.Control.Tray.desktop
     printf 'Exec=%s\n' "$(desktop_exec "$bin/maprisma-control-tray")"
 } > "$autostart/com.maprisma.Control.Tray.desktop"
-echo "Installed KDE tray; it will start at the next Plasma login."
+echo "Installed KDE tray; it will start at the next Plasma or Hyprland login."
