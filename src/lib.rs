@@ -18,7 +18,9 @@ pub fn binary() -> PathBuf {
 fn binary_for_home(home: Option<&Path>) -> PathBuf {
     if let Some(home) = home {
         let local = home.join(".local/bin/maprisma");
-        if local.is_file() {
+        // only a program that can run: a copy without the x bit must not hide /usr/bin's
+        use std::os::unix::fs::PermissionsExt;
+        if std::fs::metadata(&local).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0) {
             return local;
         }
     }
@@ -397,6 +399,10 @@ mod tests {
         assert_eq!(binary_for_home(Some(&dir)), PathBuf::from(BINARY));
         let local = dir.join(".local/bin/maprisma");
         std::fs::write(&local, "#!/bin/sh\n").unwrap();
+        // not executable: the system one
+        assert_eq!(binary_for_home(Some(&dir)), PathBuf::from(BINARY));
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&local, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(binary_for_home(Some(&dir)), local);
         std::fs::remove_dir_all(dir).unwrap();
     }

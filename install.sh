@@ -42,10 +42,12 @@ mkdir -p "$autostart"
     cat data/com.maprisma.Control.Tray.desktop
     printf 'Exec=%s\n' "$(desktop_exec "$bin/maprisma-control-tray")"
 } > "$autostart/com.maprisma.Control.Tray.desktop"
-if pgrep -f "$bin/maprisma-control-tray" >/dev/null 2>&1; then
-    pkill -f "$bin/maprisma-control-tray" || true
+# Only the tray itself (its command line starts with it), only the user's own.
+tray_pattern="^$bin/maprisma-control-tray( |\$)"
+if pgrep -u "$(id -u)" -f "$tray_pattern" >/dev/null 2>&1; then
+    pkill -u "$(id -u)" -f "$tray_pattern" || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do
-        pgrep -f "$bin/maprisma-control-tray" >/dev/null 2>&1 || break
+        pgrep -u "$(id -u)" -f "$tray_pattern" >/dev/null 2>&1 || break
         sleep 0.1
     done
     setsid -f "$bin/maprisma-control-tray" >/dev/null 2>&1 < /dev/null || true
