@@ -9,6 +9,21 @@ use std::time::{Duration, Instant};
 pub const PROCESS: &str = "maprisma"; // /proc/<pid>/comm of the app (the core is maprisma-core)
 pub const BINARY: &str = "/usr/bin/maprisma";
 pub const DEFAULT_TEST_DIR: &str = "/mnt/Data/maprisma-test";
+
+/// User-installed `~/.local/bin/maprisma` when present, otherwise `/usr/bin/maprisma`.
+pub fn binary() -> PathBuf {
+    binary_for_home(std::env::var_os("HOME").as_deref().map(Path::new))
+}
+
+fn binary_for_home(home: Option<&Path>) -> PathBuf {
+    if let Some(home) = home {
+        let local = home.join(".local/bin/maprisma");
+        if local.is_file() {
+            return local;
+        }
+    }
+    PathBuf::from(BINARY)
+}
 pub const POLL: Duration = Duration::from_secs(2);
 pub const PENDING_TIMEOUT: Duration = Duration::from_secs(20); // "Starting…" / "Stopping…" at most this long
 pub const KILL_AFTER: Duration = Duration::from_secs(8); // SIGTERM, then SIGKILL if it is still there
@@ -221,14 +236,19 @@ pub fn execute(
             }
             let start = action != Action::Stop && running.is_none();
             if start {
+                let bin = binary();
                 if action == Action::StartRecorded {
                     let dir = test_dir();
                     spawn(
-                        &["bash", &dir.join("start.sh").to_string_lossy()],
+                        &[
+                            "bash",
+                            &dir.join("start.sh").to_string_lossy(),
+                            &bin.to_string_lossy(),
+                        ],
                         Some(&dir),
                     );
                 } else {
-                    spawn(&[BINARY], None);
+                    spawn(&[&bin.to_string_lossy()], None);
                 }
                 *pending = Some((Pending::Starting, Instant::now()));
             } else if let Some(running) = running {
@@ -236,7 +256,10 @@ pub fn execute(
                 *pending = Some((Pending::Stopping, Instant::now()));
             }
         }
-        Action::ToggleWindow => spawn(&[BINARY, "--toggle"], None),
+        Action::ToggleWindow => {
+            let bin = binary();
+            spawn(&[&bin.to_string_lossy(), "--toggle"], None);
+        }
         Action::OpenFolder => {
             let dir = running
                 .as_ref()
@@ -364,6 +387,18 @@ mod tests {
         assert!(found.unwrap().pids.contains(&pid));
         assert_eq!(recording, Some(PathBuf::from("/tmp/maprisma-unit-test")));
         assert!(identity(pid).is_none());
+    }
+    #[test]
+    fn binary_prefers_user_local_install_when_present() {
+        let dir =
+            std::env::temp_dir().join(format!("maprisma-binary-test-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".local/bin")).unwrap();
+        assert_eq!(binary_for_home(None), PathBuf::from(BINARY));
+        assert_eq!(binary_for_home(Some(&dir)), PathBuf::from(BINARY));
+        let local = dir.join(".local/bin/maprisma");
+        std::fs::write(&local, "#!/bin/sh\n").unwrap();
+        assert_eq!(binary_for_home(Some(&dir)), local);
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn stop_never_signals_a_process_that_is_not_our_maprisma() {
