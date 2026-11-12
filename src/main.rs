@@ -12,6 +12,7 @@ mod corners;
 mod look;
 mod shot;
 mod shot_files;
+mod window_size;
 use shot::{Shot, ShotMsg};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
@@ -43,11 +44,39 @@ static AUTOSIZE_ID: LazyLock<Id> = LazyLock::new(|| Id::new("maprisma-autosize")
 
 fn main() -> cosmic::iced::Result {
     if std::env::args().any(|arg| arg == "--window") {
+        let (width, height) = window_start_size();
         cosmic::app::run::<Control>(
             cosmic::app::Settings::default()
-                .size(cosmic::iced::Size::new(420.0, 740.0)), true)
+                .size(cosmic::iced::Size::new(width, height)), true)
     } else {
         cosmic::applet::run::<Control>(false)
+    }
+}
+
+// The `--window` size: the one the user left it at (layout rule 5a), else 420 × 740.
+fn window_start_size() -> window_size::Size {
+    let saved = i18n::setting(window_size::KEY).and_then(|text| serde_json::from_str(&text).ok());
+    window_size::parse(saved.as_ref()).unwrap_or((420.0, 740.0))
+}
+
+/// What Esc does (layout rule 5a): the innermost open thing first, then the window or popup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EscStep {
+    /// Skip the screenshot's note (or close its error).
+    Note,
+    /// Close the window (`--window`) or the popup.
+    Close,
+    Nothing,
+}
+
+/// `shown`: Esc came from the window or the open popup (not the panel button).
+fn esc_step(shown: bool, note: bool) -> EscStep {
+    if !shown {
+        EscStep::Nothing
+    } else if note {
+        EscStep::Note
+    } else {
+        EscStep::Close
     }
 }
 
@@ -136,11 +165,14 @@ struct Control {
     shot: Shot,
     corners: String, // Settings › Corners (corners.rs)
     screenshot_key: bool,
+    resize: window_size::Debounce,
 }
 
 #[derive(Debug, Clone)]
 enum Message {
     Tick,
+    Escape(window::Id),
+    SaveSize,
     TogglePopup,
     CloseRequested(window::Id),
     Rectangle(RectangleUpdate<u32>),
@@ -334,6 +366,18 @@ impl Control {
         }
     }
 
+    // A resize that has settled (or, on `closing`, any waiting one) goes to settings.conf; not
+    // while maximised, fullscreen or tiled (libcosmic's sharp corners).
+    fn save_size(&mut self, closing: bool) {
+        let ignore = self.core.window.sharp_corners;
+        let size = if closing { self.resize.flush(ignore) } else { self.resize.due(Instant::now(), ignore) };
+        if let Some(size) = size {
+            self.error = i18n::set_setting(window_size::KEY, &window_size::to_value(size).to_string())
+                .err()
+                .map(|error| error.to_string());
+        }
+    }
+
     fn close_popup(&mut self) -> Task<Message> {
         match self.popup.take() {
             Some(popup) => {
@@ -368,6 +412,9 @@ impl cosmic::Application for Control {
             ..Default::default()
         };
         control.refresh();
+        if standalone {
+            control.resize = window_size::Debounce::new(window_start_size());
+        }
         let look = control.read_look();
         let task = if standalone {
             control.set_header_title(tr("Maprisma Control"));
@@ -382,6 +429,12 @@ impl cosmic::Application for Control {
         Some(Message::CloseRequested(id))
     }
 
+    fn on_window_resize(&mut self, id: window::Id, width: f32, height: f32) {
+        if self.standalone && self.core.main_window_id() == Some(id) {
+            self.resize.resized(width, height, Instant::now());
+        }
+    }
+
     fn subscription(&self) -> Subscription<Message> {
         // Faster while starting or stopping, so the line changes right away.
         let every = if self.pending.is_some() {
@@ -389,10 +442,24 @@ impl cosmic::Application for Control {
         } else {
             POLL
         };
+        let save_size = if self.standalone && self.resize.waiting() {
+            cosmic::iced::time::every(Duration::from_millis(100)).map(|_| Message::SaveSize)
+        } else {
+            Subscription::none()
+        };
         Subscription::batch(vec![
             rectangle_tracker_subscription(0).map(|update| Message::Rectangle(update.1)),
             cosmic::iced::time::every(every).map(|_| Message::Tick),
             Shot::subscription().map(Message::Shot),
+            // Esc (esc_step); not one a widget took for itself.
+            cosmic::iced::event::listen_with(|event, status, id| match event {
+                cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+                    key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
+                    ..
+                }) if status == cosmic::iced::event::Status::Ignored => Some(Message::Escape(id)),
+                _ => None,
+            }),
+            save_size,
         ])
     }
 
@@ -410,6 +477,24 @@ impl cosmic::Application for Control {
                 self.refresh();
                 return self.read_look();
             }
+            // Esc goes through esc_step (Message::Escape), which hands it to the note card.
+            Message::Shot(ShotMsg::Escape(_)) => {}
+            Message::Escape(id) => {
+                let shown = self.shot_target(id);
+                match esc_step(shown, self.shot.showing(id)) {
+                    EscStep::Note => {
+                        return self.shot.update(ShotMsg::Escape(id), self.screenshot_key, true, Message::Shot);
+                    }
+                    // Like the window's own close; the popup like a click on the icon.
+                    EscStep::Close if self.standalone => {
+                        let _ = self.update(Message::CloseRequested(id)); // only bookkeeping, no task
+                        return cosmic::iced::exit();
+                    }
+                    EscStep::Close => return self.close_popup(),
+                    EscStep::Nothing => {}
+                }
+            }
+            Message::SaveSize => self.save_size(false),
             Message::Shot(message) => {
                 let ours = match &message {
                     ShotMsg::Key(id) => self.shot_target(*id),
@@ -435,6 +520,9 @@ impl cosmic::Application for Control {
             },
             Message::CloseRequested(id) => {
                 self.shot.closed(id);
+                if self.standalone {
+                    self.save_size(true);
+                }
                 if self.popup == Some(id) {
                     self.popup = None;
                 }
@@ -544,4 +632,26 @@ impl cosmic::Application for Control {
         if self.standalone { None } else { Some(cosmic::applet::style()) }
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn esc_closes_the_innermost_thing_first() {
+        assert_eq!(esc_step(true, true), EscStep::Note);
+        assert_eq!(esc_step(true, false), EscStep::Close);
+        // Not from the window or the open popup (e.g. the panel button): nothing.
+        assert_eq!(esc_step(false, true), EscStep::Nothing);
+        assert_eq!(esc_step(false, false), EscStep::Nothing);
+    }
+
+    #[test]
+    fn window_size_as_a_setting_line() {
+        let line = window_size::to_value((500.0, 800.0)).to_string();
+        assert!(!line.contains('\n'));
+        let back: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(window_size::parse(Some(&back)), Some((500.0, 800.0)));
+    }
 }
