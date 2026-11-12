@@ -8,6 +8,8 @@
 
 use maprisma_applet::*;
 mod corners;
+#[allow(dead_code)] // the shared copy; not every part is used here
+mod look;
 mod shot;
 mod shot_files;
 use shot::{Shot, ShotMsg};
@@ -68,9 +70,23 @@ fn dim<'a>(content: impl Into<std::borrow::Cow<'a, str>> + 'a) -> Element<'a, Me
         .into()
 }
 
-fn fill(color: Color, radius: f32) -> theme::Container<'static> {
-    theme::Container::custom(move |_| iced_container::Style {
-        background: Some(Background::Color(color)),
+fn error_text(theme: &cosmic::Theme) -> iced_text::Style {
+    iced_text::Style {
+        color: Some(Color::from(theme.cosmic().destructive_color())),
+        ..Default::default()
+    }
+}
+
+// A popup section heading: small, bold, upper case, dim (as in the other Maprisma applets).
+fn section<'a>(title: String) -> Element<'a, Message> {
+    container(text::caption_heading(title.to_uppercase()).class(theme::Text::Custom(dim_text)))
+        .padding([8, 16, 4, 16])
+        .into()
+}
+
+fn fill(status: Option<Status>, radius: f32) -> theme::Container<'static> {
+    theme::Container::custom(move |theme: &cosmic::Theme| iced_container::Style {
+        background: Some(Background::Color(Status::color(status, theme))),
         border: Border {
             radius: radius.into(),
             ..Default::default()
@@ -79,21 +95,30 @@ fn fill(color: Color, radius: f32) -> theme::Container<'static> {
     })
 }
 
-const GREEN: Color = Color::from_rgb(
-    0x33 as f32 / 255.0,
-    0xd1 as f32 / 255.0,
-    0x7a as f32 / 255.0,
-);
-const RED: Color = Color::from_rgb(
-    0xe0 as f32 / 255.0,
-    0x1b as f32 / 255.0,
-    0x24 as f32 / 255.0,
-);
-const AMBER: Color = Color::from_rgb(
-    0xf6 as f32 / 255.0,
-    0xd3 as f32 / 255.0,
-    0x2d as f32 / 255.0,
-);
+// Maprisma's state, in the theme's colours: running (green), a recorded test session (red),
+// starting or stopping (yellow); stopped: a dim grey dot and no line.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Status {
+    Running,
+    Recording,
+    Pending,
+}
+
+impl Status {
+    fn color(status: Option<Status>, theme: &cosmic::Theme) -> Color {
+        let c = theme.cosmic();
+        match status {
+            Some(Status::Running) => c.success_color().into(),
+            Some(Status::Recording) => c.destructive_color().into(),
+            Some(Status::Pending) => c.warning_color().into(),
+            None => {
+                let mut grey = Color::from(c.on_bg_color());
+                grey.a = 0.4;
+                grey
+            }
+        }
+    }
+}
 
 // ------------------------------------------------------------------------- applet
 
@@ -146,8 +171,16 @@ impl Control {
     // again on every tick: another Control (window or applet) may have changed them.
     fn read_look(&mut self) -> Task<Message> {
         self.screenshot_key = i18n::setting("screenshot_key").as_deref() != Some("false");
-        self.corners = corners::normalize(&i18n::setting("corners").unwrap_or_default()).to_string();
+        let corners = corners::normalize(&i18n::setting("corners").unwrap_or_default()).to_string();
+        let mut restyle = corners != self.corners;
+        self.corners = corners;
         corners::set_current(&self.corners);
+        // The desktop's colours and corners (Maprisma Theme can change them any time);
+        // look::refresh re-reads at most every 5 s.
+        restyle |= look::refresh();
+        if restyle && self.standalone {
+            return corners::set_app_theme(&self.corners);
+        }
         Task::none()
     }
 
@@ -156,15 +189,15 @@ impl Control {
         self.popup == Some(id) || (self.standalone && self.core.main_window_id() == Some(id))
     }
 
-    fn status_color(&self) -> Option<Color> {
+    fn status(&self) -> Option<Status> {
         if self.pending.is_some() {
-            return Some(AMBER);
+            return Some(Status::Pending);
         }
         let running = self.running.as_ref()?;
         Some(if running.recording.is_some() {
-            RED
+            Status::Recording
         } else {
-            GREEN
+            Status::Running
         })
     }
 
@@ -175,11 +208,11 @@ impl Control {
     fn panel_content(&self) -> Element<'_, Message> {
         let size = self.core.applet.suggested_size(true).0;
         let logo = icon::from_name(BAR_ICON).size(size).symbolic(false).icon();
-        let line: Element<Message> = match self.status_color() {
-            Some(color) => container(space::horizontal())
+        let line: Element<Message> = match self.status() {
+            Some(status) => container(space::horizontal())
                 .width(Length::Fixed(size as f32))
                 .height(Length::Fixed(2.0))
-                .class(fill(color, 1.0))
+                .class(fill(Some(status), 1.0))
                 .into(),
             None => space::vertical().height(Length::Fixed(2.0)).into(),
         };
@@ -197,24 +230,20 @@ impl Control {
         let dot = container(space::horizontal())
             .width(Length::Fixed(8.0))
             .height(Length::Fixed(8.0))
-            .class(fill(
-                self.status_color()
-                    .unwrap_or(Color::from_rgba(0.5, 0.5, 0.5, 0.5)),
-                corners::now().pill.min(4.0),
-            ));
+            .class(fill(self.status(), corners::now().pill.min(4.0)));
         let header = row![
             icon::from_name(ICON).size(32).icon(),
             column![
                 text::title4(title),
                 row![dot, dim(self.status_text())]
-                    .spacing(6)
+                    .spacing(8)
                     .align_y(Alignment::Center)
             ]
-            .spacing(2),
+            .spacing(4),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
-        let mut info = column![header].spacing(6);
+        let mut info = column![header].spacing(8);
         if let Some(dir) = self.running.as_ref().and_then(|r| r.recording.as_ref()) {
             info = info.push(dim(trf("Recording into {0}", &[&dir.display().to_string()])));
             info = info.push(dim(
@@ -257,7 +286,7 @@ impl Control {
             )
             .push(menu_button(text::body(tr("Open the test folder"))).on_press(Message::OpenFolder));
 
-        actions = actions.push(divider::horizontal::default()).push(text::body(tr("Language")));
+        actions = actions.push(divider::horizontal::default()).push(section(tr("Language")));
         let preference = i18n::preference();
         for (index, label) in language_options().into_iter().enumerate() {
             let label = if i18n::CODES[index] == preference { format!("✓ {label}") } else { label };
@@ -270,7 +299,7 @@ impl Control {
                 menu_button(text::body(check(self.screenshot_key, tr("F12 saves a screenshot"))))
                     .on_press(Message::ScreenshotKey),
             )
-            .push(text::body(tr("Corners")));
+            .push(section(tr("Corners")));
         let desktop = corners::desktop_radius().round().to_string();
         let labels = [
             trf("Like the desktop ({0} px)", &[&desktop]),
@@ -284,18 +313,23 @@ impl Control {
             );
         }
         if let Some(error) = &self.error {
-            actions = actions.push(text::body(error.clone()));
+            actions = actions.push(padded_control(text::body(error.clone()).class(theme::Text::Custom(error_text))));
         }
         column![padded_control(info).padding([12, 16]), actions]
-            .width(Length::Fixed(POPUP_WIDTH))
+            .width(self.width())
             .padding([0, 0, 8, 0])
             .into()
+    }
+
+    // The popup's width; the window (--window) fills its width like the other Maprisma windows.
+    fn width(&self) -> Length {
+        if self.standalone { Length::Fill } else { Length::Fixed(POPUP_WIDTH) }
     }
 
     // The F12 note card above the menu while it is asked for.
     fn with_card<'a>(&'a self, id: window::Id, content: Element<'a, Message>) -> Element<'a, Message> {
         match self.shot.card(id, Message::Shot) {
-            Some(card) => column![card, content].width(Length::Fixed(POPUP_WIDTH)).into(),
+            Some(card) => column![card, content].width(self.width()).into(),
             None => content,
         }
     }
@@ -337,7 +371,9 @@ impl cosmic::Application for Control {
         let look = control.read_look();
         let task = if standalone {
             control.set_header_title(tr("Maprisma Control"));
-            control.set_window_title(tr("Maprisma Control"), control.core.main_window_id().unwrap())
+            let id = control.core.main_window_id().unwrap();
+            // The desktop's theme for the whole window (title bar too), see look.rs.
+            Task::batch([control.set_window_title(tr("Maprisma Control"), id), corners::set_app_theme(&control.corners)])
         } else { Task::none() };
         (control, Task::batch([look, task]))
     }
@@ -472,7 +508,7 @@ impl cosmic::Application for Control {
     fn view(&self) -> Element<'_, Message> {
         if self.standalone {
             let id = self.core.main_window_id().unwrap_or(window::Id::RESERVED);
-            return corners::apply(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.menu())));
+            return corners::apply_window(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.menu())));
         }
         let horizontal = matches!(
             self.core.applet.anchor,
@@ -497,10 +533,15 @@ impl cosmic::Application for Control {
     }
 
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
+        if self.standalone {
+            return corners::apply_window(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.menu())));
+        }
         corners::apply(&self.corners, self.core.applet.popup_container(self.with_card(id, self.menu())))
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
-        Some(cosmic::applet::style())
+        // The window (--window) draws the theme's background; the applet stays transparent.
+        if self.standalone { None } else { Some(cosmic::applet::style()) }
     }
+
 }

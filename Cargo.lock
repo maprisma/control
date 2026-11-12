@@ -3221,6 +3221,7 @@ dependencies = [
  "libc",
  "libcosmic",
  "png 0.18.1",
+ "serde_json",
  "tokio",
  "zbus",
 ]
