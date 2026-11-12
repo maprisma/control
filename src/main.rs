@@ -369,7 +369,8 @@ impl Control {
     // A resize that has settled (or, on `closing`, any waiting one) goes to settings.conf; not
     // while maximised, fullscreen or tiled (libcosmic's sharp corners).
     fn save_size(&mut self, closing: bool) {
-        let ignore = self.core.window.sharp_corners;
+        let sharp = self.core.window.sharp_corners;
+        let ignore = || window_size::not_users_size(sharp);
         let size = if closing { self.resize.flush(ignore) } else { self.resize.due(Instant::now(), ignore) };
         if let Some(size) = size {
             self.error = i18n::set_setting(window_size::KEY, &window_size::to_value(size).to_string())
