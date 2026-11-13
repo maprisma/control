@@ -13,6 +13,12 @@ type Layout = (i32, Props, Vec<OwnedValue>);
 type Pixmaps = Vec<(i32, i32, Vec<u8>)>;
 /// The tray icon: a name of its own (Maprisma Manager can change it).
 const ICON: &str = "io.github.ubruckhaus.CosmicMaprisma-symbolic";
+/// The logo greyed while Maprisma is not running (data/icons/maprisma-off-symbolic.svg).
+const ICON_OFF: &str = "io.github.ubruckhaus.CosmicMaprisma-off-symbolic";
+/// The bar's logo: in its colours while Maprisma runs, greyed when it is stopped.
+fn icon_for(running: &Option<Running>) -> &'static str {
+    if running.is_some() { ICON } else { ICON_OFF }
+}
 struct State {
     running: Option<Running>,
     pending: Option<(Pending, std::time::Instant)>,
@@ -221,8 +227,8 @@ impl Tray {
         0
     }
     #[zbus(property)]
-    fn icon_name(&self) -> &str {
-        ICON
+    async fn icon_name(&self) -> &str {
+        icon_for(&self.state.lock().await.running)
     }
     #[zbus(property)]
     fn icon_pixmap(&self) -> Pixmaps {
@@ -277,6 +283,8 @@ impl Tray {
     async fn new_status(emitter: &SignalEmitter<'_>, status: &str) -> zbus::Result<()>;
     #[zbus(signal)]
     async fn new_tool_tip(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+    #[zbus(signal)]
+    async fn new_icon(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
 async fn publish(
     connection: &Connection,
@@ -287,6 +295,7 @@ async fn publish(
     let before = s.menu.clone();
     let old_status = s.status();
     let old_tooltip = s.tooltip();
+    let old_icon = icon_for(&s.running);
     s.refresh();
     if let Some(action) = action {
         let running = s.running.clone();
@@ -312,12 +321,16 @@ async fn publish(
     let revision = s.revision;
     let status = s.status();
     let tooltip_changed = old_tooltip != s.tooltip();
+    let icon_changed = old_icon != icon_for(&s.running);
     drop(s);
     if changed {
         Menu::layout_updated(&SignalEmitter::new(connection, "/MenuBar")?, revision, 0).await?;
     }
     if tooltip_changed {
         Tray::new_tool_tip(&SignalEmitter::new(connection, "/StatusNotifierItem")?).await?;
+    }
+    if icon_changed {
+        Tray::new_icon(&SignalEmitter::new(connection, "/StatusNotifierItem")?).await?;
     }
     if status != old_status {
         Tray::new_status(
@@ -417,6 +430,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tray_logo_follows_maprisma() {
+        assert_eq!(icon_for(&None), ICON_OFF);
+        let running: Option<Running> = Some(Default::default());
+        assert_eq!(icon_for(&running), ICON);
+    }
     #[test]
     fn dbus_layout_signature_depth_and_properties() {
         let menu = model::menu(&None, None, "", false, true);

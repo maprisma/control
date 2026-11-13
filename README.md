@@ -1,6 +1,6 @@
 # Maprisma Control for COSMIC
 
-A COSMIC panel applet that starts and stops Maprisma (`maprisma-applet`; `maprisma-applet --window` opens the same menu in a window, and `maprisma-control-tray` is the KDE tray). Interface languages: see [docs/translations.md](docs/translations.md). Tests: `cargo test --offline`.
+A COSMIC panel applet that starts and stops Maprisma (`maprisma-applet`; `maprisma-applet --window` opens the same menu in a window, and `maprisma-control-tray` is the KDE tray; its logo is in colour while Maprisma runs and greyed when it is stopped). Interface languages: see [docs/translations.md](docs/translations.md). Tests: `cargo test --offline`.
 
 ## F12: a screenshot with a note
 
