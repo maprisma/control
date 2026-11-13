@@ -31,5 +31,6 @@
   "The note could not be saved: {0}": "Nie udało się zapisać notatki: {0}",
   "Like the desktop ({0} px)": "Jak pulpit ({0} px)",
   "Slightly rounded ({0} px)": "Lekko zaokrąglone ({0} px)",
-  "Rounded ({0} px)": "Zaokrąglone ({0} px)"
+  "Rounded ({0} px)": "Zaokrąglone ({0} px)",
+  "Open Maprisma Control": "Otwórz Sterowanie Maprisma"
 }

@@ -107,6 +107,7 @@ pub fn menu(
         true,
         Some(Action::OpenFolder),
     ));
+    items.push(Item::new(13, tr("Open Maprisma Control"), true, Some(Action::OpenControl)));
     let mut languages = Item::new(20, tr("Language"), true, None);
     let preference = maprisma_applet::i18n::preference();
     languages.children = language_options().into_iter().enumerate().map(|(index, label)| {
@@ -130,6 +131,8 @@ mod tests {
         assert!(m.activate(9).is_none());
         assert!(m.activate(11).is_none());
         assert!(m.find(6).is_none());
+        // Corners and F12 live in Control's window: the tray opens it.
+        assert_eq!(m.activate(13), Some(Action::OpenControl));
         let m = menu(&None, None, "", true, true);
         assert_eq!(m.activate(9), Some(Action::StartRecorded));
         assert_eq!(m.activate(11), Some(Action::OpenNotes));

@@ -205,6 +205,18 @@ pub enum Action {
     OpenNotes,
     Activate,
     Language(usize),
+    /// The tray (KDE, Hyprland): Control's own window (`maprisma-applet --window`), which has
+    /// the settings the tray menu lacks (Corners, F12).
+    OpenControl,
+}
+
+/// The Control window's program: next to the tray's own (both are installed together), else
+/// from PATH.
+pub fn control_binary(tray: Option<&Path>) -> PathBuf {
+    tray.and_then(Path::parent)
+        .map(|dir| dir.join("maprisma-applet"))
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from("maprisma-applet"))
 }
 
 pub fn execute(
@@ -268,6 +280,10 @@ pub fn execute(
                 .and_then(|r| r.recording.clone())
                 .unwrap_or_else(test_dir);
             spawn(&["xdg-open", &dir.to_string_lossy()], None);
+        }
+        Action::OpenControl => {
+            let exe = std::env::current_exe().ok();
+            spawn(&[&control_binary(exe.as_deref()).to_string_lossy(), "--window"], None);
         }
         Action::OpenNotes => {
             if let Some(run) = last_run() {
@@ -390,6 +406,18 @@ mod tests {
         assert_eq!(recording, Some(PathBuf::from("/tmp/maprisma-unit-test")));
         assert!(identity(pid).is_none());
     }
+    #[test]
+    fn control_binary_next_to_the_tray_else_path() {
+        let dir = std::env::temp_dir().join(format!("maprisma-control-bin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tray = dir.join("maprisma-control-tray");
+        assert_eq!(control_binary(None), PathBuf::from("maprisma-applet"));
+        assert_eq!(control_binary(Some(&tray)), PathBuf::from("maprisma-applet"));
+        std::fs::write(dir.join("maprisma-applet"), "").unwrap();
+        assert_eq!(control_binary(Some(&tray)), dir.join("maprisma-applet"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn binary_prefers_user_local_install_when_present() {
         let dir =

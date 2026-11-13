@@ -31,5 +31,6 @@
   "The note could not be saved: {0}": "No se pudo guardar la nota: {0}",
   "Like the desktop ({0} px)": "Como el escritorio ({0} px)",
   "Slightly rounded ({0} px)": "Ligeramente redondeadas ({0} px)",
-  "Rounded ({0} px)": "Redondeadas ({0} px)"
+  "Rounded ({0} px)": "Redondeadas ({0} px)",
+  "Open Maprisma Control": "Abrir el control de Maprisma"
 }
