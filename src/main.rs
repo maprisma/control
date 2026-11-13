@@ -390,6 +390,31 @@ impl Control {
     }
 }
 
+/// COSMIC `--window` with chosen corners: the app theme is a Custom copy, and libcosmic applies
+/// system theme changes only to a System theme. So the new system theme ([base]) gets the chosen
+/// corners again. None when nothing is to do: an applet popup (it themes per view), "desktop"
+/// corners (the System theme follows by itself) or a desktop whose colours look.rs reads
+/// ([desktop_look]: KDE/Hyprland, re-read on the tick).
+fn corner_theme_on(base: &cosmic::cosmic_theme::Theme, corners_setting: &str, standalone: bool, desktop_look: bool) -> Option<cosmic::Theme> {
+    if !standalone || desktop_look || corners::normalize(corners_setting) == "desktop" {
+        return None;
+    }
+    let mut custom = base.clone();
+    custom.corner_radii = corners::radii(corners::sizes(corners_setting));
+    let mut theme = cosmic::Theme::system(std::sync::Arc::new(base.clone()));
+    theme.theme_type = cosmic::theme::ThemeType::Custom(std::sync::Arc::new(custom));
+    Some(theme)
+}
+
+impl Control {
+    fn follow_system_theme(&self, base: &cosmic::cosmic_theme::Theme) -> Task<Message> {
+        match corner_theme_on(base, &self.corners, self.standalone, look::theme().is_some()) {
+            Some(theme) => cosmic::command::set_theme(theme),
+            None => Task::none(),
+        }
+    }
+}
+
 impl cosmic::Application for Control {
     type Executor = cosmic::SingleThreadExecutor;
     type Flags = bool;
@@ -424,6 +449,15 @@ impl cosmic::Application for Control {
             Task::batch([control.set_window_title(tr("Maprisma Control"), id), corners::set_app_theme(&control.corners)])
         } else { Task::none() };
         (control, Task::batch([look, task]))
+    }
+
+    fn system_theme_update(&mut self, _keys: &[&'static str], new_theme: &cosmic::cosmic_theme::Theme) -> Task<Message> {
+        self.follow_system_theme(new_theme)
+    }
+
+    fn system_theme_mode_update(&mut self, _keys: &[&'static str], mode: &cosmic::cosmic_theme::ThemeMode) -> Task<Message> {
+        let system = if mode.is_dark { cosmic::theme::system_dark() } else { cosmic::theme::system_light() };
+        self.follow_system_theme(system.cosmic())
     }
 
     fn on_close_requested(&self, id: window::Id) -> Option<Message> {
@@ -646,6 +680,28 @@ mod tests {
         // Not from the window or the open popup (e.g. the panel button): nothing.
         assert_eq!(esc_step(false, true), EscStep::Nothing);
         assert_eq!(esc_step(false, false), EscStep::Nothing);
+    }
+
+    #[test]
+    fn custom_corners_follow_a_new_cosmic_theme() {
+        let mut base = cosmic::cosmic_theme::Theme::dark_default();
+        base.accent = cosmic::cosmic_theme::Component::colored_component(
+            cosmic::cosmic_theme::palette::Srgba::new(0.9, 0.1, 0.1, 1.0),
+            cosmic::cosmic_theme::palette::Srgba::new(0.0, 0.0, 0.0, 1.0),
+            cosmic::cosmic_theme::palette::Srgba::new(0.0, 0.0, 0.0, 1.0),
+            cosmic::cosmic_theme::palette::Srgba::new(0.0, 0.0, 0.0, 1.0),
+            cosmic::cosmic_theme::palette::Srgba::new(0.0, 0.0, 0.0, 1.0),
+        );
+        let theme = corner_theme_on(&base, "rounded", true, false).unwrap();
+        let cosmic = theme.cosmic();
+        assert_eq!(cosmic.corner_radii.radius_m, [12.0; 4]);
+        // the new system colours, not the old custom copy
+        assert_eq!(cosmic.accent.base, base.accent.base);
+        assert!(matches!(theme.theme_type, cosmic::theme::ThemeType::Custom(_)));
+        // nothing to do: applet popup, "desktop" corners, or KDE/Hyprland colours from look.rs
+        assert!(corner_theme_on(&base, "rounded", false, false).is_none());
+        assert!(corner_theme_on(&base, "desktop", true, false).is_none());
+        assert!(corner_theme_on(&base, "square", true, true).is_none());
     }
 
     #[test]
