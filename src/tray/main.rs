@@ -13,7 +13,7 @@ type Layout = (i32, Props, Vec<OwnedValue>);
 type Pixmaps = Vec<(i32, i32, Vec<u8>)>;
 /// The tray icon: a name of its own (Maprisma Manager can change it).
 const ICON: &str = "io.github.ubruckhaus.CosmicMaprisma-symbolic";
-/// Maprisma's robot in the theme green while Maprisma runs (data/icons/maprisma-active-symbolic.svg),
+/// Maprisma's robot in the theme accent while Maprisma runs (data/icons/maprisma-active-symbolic.svg),
 /// as every Maprisma tray shows its active state.
 const ICON_ACTIVE: &str = "io.github.ubruckhaus.CosmicMaprisma-active-symbolic";
 /// The plain symbolic robot while Maprisma is stopped (data/icons/maprisma-off-symbolic.svg).
