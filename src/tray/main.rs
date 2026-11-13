@@ -13,11 +13,14 @@ type Layout = (i32, Props, Vec<OwnedValue>);
 type Pixmaps = Vec<(i32, i32, Vec<u8>)>;
 /// The tray icon: a name of its own (Maprisma Manager can change it).
 const ICON: &str = "io.github.ubruckhaus.CosmicMaprisma-symbolic";
-/// The logo greyed while Maprisma is not running (data/icons/maprisma-off-symbolic.svg).
+/// Maprisma's robot in the theme green while Maprisma runs (data/icons/maprisma-active-symbolic.svg),
+/// as every Maprisma tray shows its active state.
+const ICON_ACTIVE: &str = "io.github.ubruckhaus.CosmicMaprisma-active-symbolic";
+/// The plain symbolic robot while Maprisma is stopped (data/icons/maprisma-off-symbolic.svg).
 const ICON_OFF: &str = "io.github.ubruckhaus.CosmicMaprisma-off-symbolic";
-/// The bar's logo: in its colours while Maprisma runs, greyed when it is stopped.
+/// The bar's robot: green while Maprisma runs, plain when it is stopped.
 fn icon_for(running: &Option<Running>) -> &'static str {
-    if running.is_some() { ICON } else { ICON_OFF }
+    if running.is_some() { ICON_ACTIVE } else { ICON_OFF }
 }
 struct State {
     running: Option<Running>,
@@ -244,7 +247,7 @@ impl Tray {
     }
     #[zbus(property)]
     fn attention_icon_name(&self) -> &str {
-        ICON
+        ICON_ACTIVE
     }
     #[zbus(property)]
     fn attention_icon_pixmap(&self) -> Pixmaps {
@@ -434,7 +437,7 @@ mod tests {
     fn tray_logo_follows_maprisma() {
         assert_eq!(icon_for(&None), ICON_OFF);
         let running: Option<Running> = Some(Default::default());
-        assert_eq!(icon_for(&running), ICON);
+        assert_eq!(icon_for(&running), ICON_ACTIVE);
     }
     #[test]
     fn dbus_layout_signature_depth_and_properties() {

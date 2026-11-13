@@ -15,7 +15,8 @@ install -Dm755 target/release/maprisma-applet "$bin/maprisma-applet"
 install -Dm755 target/release/maprisma-control-tray "$bin/maprisma-control-tray"
 # The bar icon (applet and tray) has a name of its own, so it can be changed without touching Maprisma's.
 install -Dm644 "data/icons/$id-symbolic.svg" "$data/icons/hicolor/scalable/apps/$id-symbolic.svg"
-# The tray greys the logo while Maprisma is not running.
+# The tray's robot: green while Maprisma runs, plain symbolic while it is stopped.
+install -Dm644 data/icons/maprisma-active-symbolic.svg "$data/icons/hicolor/scalable/apps/$id-active-symbolic.svg"
 install -Dm644 data/icons/maprisma-off-symbolic.svg "$data/icons/hicolor/scalable/apps/$id-off-symbolic.svg"
 gtk-update-icon-cache -q -t "$data/icons/hicolor" 2>/dev/null || true
 # Exec has two escaping layers: command argument quoting, then desktop value

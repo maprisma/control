@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 64 64"><defs><style type="text/css" id="current-color-scheme">.ColorScheme-PositiveText { color:#27ae60; }</style></defs>
+  <!-- Maprisma's robot in the theme green: shown in the tray while Maprisma runs. -->
+  <g class="ColorScheme-PositiveText" fill="none" stroke="currentColor" stroke-linecap="round">
+    <line x1="32" y1="9" x2="32" y2="16" stroke-width="5"/>
+    <rect x="12" y="16" width="40" height="30" rx="9" stroke-width="5.5"/>
+    <line x1="5" y1="26" x2="5" y2="36" stroke-width="5.5"/>
+    <line x1="59" y1="26" x2="59" y2="36" stroke-width="5.5"/>
+    <path d="M20 56 h24" stroke-width="5"/>
+  </g>
+  <g class="ColorScheme-PositiveText" fill="currentColor">
+    <circle cx="32" cy="7" r="4.5"/>
+    <circle cx="24" cy="31" r="5"/>
+    <circle cx="40" cy="31" r="5"/>
+  </g>
+</svg>
