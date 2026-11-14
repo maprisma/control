@@ -378,6 +378,12 @@ impl Control {
                 .err()
                 .map(|error| error.to_string());
         }
+        // Hyprland: where the user left it, for the next open (a move sends no event, so on close).
+        if closing && let Some(position) = window_size::current_position() {
+            if let Err(error) = i18n::set_setting(window_size::POSITION_KEY, &window_size::position_value(position).to_string()) {
+                self.error = Some(error.to_string());
+            }
+        }
     }
 
     fn close_popup(&mut self) -> Task<Message> {
@@ -443,6 +449,8 @@ impl cosmic::Application for Control {
         control.refresh();
         if standalone {
             control.resize = window_size::Debounce::new(window_start_size());
+            // Hyprland: back where the user left it (the tray rule first puts it under the bar).
+            window_size::restore_position(window_size::parse_position(i18n::setting(window_size::POSITION_KEY).and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok()).as_ref()), window_start_size());
         }
         let look = control.read_look();
         let task = if standalone {
