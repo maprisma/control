@@ -430,6 +430,8 @@ impl cosmic::Application for Control {
     }
 
     fn init(core: Core, standalone: bool) -> (Self, Task<Message>) {
+        let mut core = core;
+        crate::look::solid(&mut core);
         let mut control = Self {
             core,
             standalone,
