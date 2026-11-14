@@ -95,8 +95,11 @@ if [[ $mode == install ]]; then
     done
 fi
 mkdir -p -- "$base"
-exec 9>"$base/.maprisma-control-install.lock"
+exec 9>>"$base/.maprisma-control-install.lock"
 flock -x 9
+# A refused run and a finished uninstall leave no lock file behind (the transaction's own
+# rollback trap replaces this one while an install runs).
+trap '[[ -e $folder || -e $journal ]] || rm -f -- "$base/.maprisma-control-install.lock"' EXIT
 settings_check
 tray_pids() {
     local root=$1 proc exe
@@ -268,6 +271,12 @@ fi
 if [[ $mode == uninstall ]]; then
     [[ $valid == 1 ]] || die 'No installation receipt; nothing removed.'
     stop_tray "$folder"
+    # COSMIC's panel keeps a placed applet running (from the deleted file) until it restarts.
+    applet_running=0
+    for proc in /proc/[0-9]*; do
+        [[ $(stat -c %u "$proc" 2>/dev/null) == "$(id -u)" ]] || continue
+        case $(readlink "$proc/exe" 2>/dev/null) in "$folder/maprisma-applet"*) applet_running=1 ;; esac
+    done
     for i in "${!names[@]}"; do
         if matches "$i"; then rm -- "${paths[$i]}"
         elif exists "${paths[$i]}"; then echo "Keeping changed file: ${paths[$i]}"; fi
@@ -280,6 +289,10 @@ if [[ $mode == uninstall ]]; then
         rm -rf -- "$config/maprisma-control"
     fi
     echo 'Maprisma Control uninstalled.'
+    if [[ $applet_running == 1 ]]; then
+        echo 'COSMIC: its applet is still in your panel and runs until the next login. Remove it in'
+        echo 'COSMIC Settings > Desktop > Panel > Applets.'
+    fi
     exit
 fi
 for i in "${!names[@]}"; do
@@ -360,7 +373,11 @@ if [[ :${XDG_CURRENT_DESKTOP:-}: == *:Hyprland:* ]]; then
     command=${command//\\/\\\\}; command=${command//\"/\\\"}
     command=${command//\$/\\\$}; command=${command//\`/\\\`}
     command="\"$command\""
-    echo 'Hyprland without XDG autostart/uwsm: add this to your config (never added automatically):'
-    printf 'exec-once = %s\nPlain command: %s\n' "$command" "$command"
-    echo 'Lua exec-once syntax is not verified here; use the plain command with your configuration’s startup API.'
+    lua=$folder/maprisma-control-tray
+    lua=${lua//\\/\\\\}; lua=${lua//\"/\\\"}
+    echo 'Hyprland without XDG autostart (no uwsm): start the tray from your config (never added automatically).'
+    echo 'hyprland.lua (Hyprland 0.55 and newer):'
+    printf '  hl.on("hyprland.start", function () hl.exec_cmd("%s") end)\n' "$lua"
+    echo 'hyprland.conf (older Hyprland):'
+    printf '  exec-once = %s\n' "$command"
 fi
