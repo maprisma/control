@@ -46,9 +46,10 @@ fn main() -> cosmic::iced::Result {
     if std::env::args().any(|arg| arg == "--window") {
         let (width, height) = window_start_size();
         cosmic::app::run::<Control>(
-            cosmic::app::Settings::default()
+            cosmic::app::Settings::default().default_font(crate::look::default_font())
                 .size(cosmic::iced::Size::new(width, height)), true)
     } else {
+        crate::look::keep_fonts();
         cosmic::applet::run::<Control>(false)
     }
 }
@@ -631,6 +632,7 @@ impl cosmic::Application for Control {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        crate::look::keep_fonts();
         if self.standalone {
             let id = self.core.main_window_id().unwrap_or(window::Id::RESERVED);
             return corners::apply_window(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.menu())));
@@ -658,6 +660,7 @@ impl cosmic::Application for Control {
     }
 
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
+        crate::look::keep_fonts();
         if self.standalone {
             return corners::apply_window(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.menu())));
         }
