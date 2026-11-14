@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Ubuntu 24.04 / glibc 2.39 release builder. Compilation never has network access.
+set -euo pipefail
+cd -- "$(dirname -- "$0")/.."
+root=$PWD
+local_build=0
+bootstrap_network=none
+for arg in "$@"; do
+    case $arg in
+        --no-container) local_build=1 ;;
+        --allow-bootstrap-network) bootstrap_network=default ;;
+        *) echo 'Usage: tools/build-release [--no-container] [--allow-bootstrap-network]' >&2; exit 1 ;;
+    esac
+done
+version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)
+toolchain=$(rustc --version | awk '{print $2}')
+[[ $(uname -m) == x86_64 ]] || { echo 'Requires an x86_64 build host.' >&2; exit 1; }
+# libcosmic at the locked revision requires 1.93; edition 2024 needs >=1.85.
+[[ $(printf '%s\n' 1.93 "$toolchain" | sort -V | head -n1) == 1.93 ]] || { echo 'Rust >=1.93 required by libcosmic.' >&2; exit 1; }
+mkdir -p dist
+work=$(mktemp -d "$root/dist/.build.XXXXXX")
+trap 'rm -rf -- "$work"' EXIT
+if [[ $local_build == 1 ]]; then
+    echo 'LOCAL TEST BUILD: NOT A RELEASE (glibc audit still enforced).'
+    cargo build --release --locked --offline
+    mkdir "$work/bin"
+    cp target/release/maprisma-applet target/release/maprisma-control-tray "$work/bin/"
+else
+    command -v podman >/dev/null || { echo 'podman is required.' >&2; exit 1; }
+    # The host's cargo cache (crates.io and the locked git sources) goes in as a copy-on-write
+    # overlay: the container builds offline and never changes the host's cache. (cargo vendor can't
+    # vendor libcosmic: the same git repo is referenced with and without rev.)
+    # --offline refuses to fetch anything not already cached: run `cargo fetch --locked` once.
+    cargo fetch --locked --offline
+    cargo_home=${CARGO_HOME:-$HOME/.cargo}
+    cat > "$work/Containerfile" <<DOCKER
+FROM docker.io/library/ubuntu:24.04
+# wayland-sys and xkbcommon use pkg-config; gettext-sys builds bundled gettext.
+# zbus is pure Rust (no libdbus dependency). cmake/autotools support bundled builds.
+# gettext-sys checks cmp/diff/find/xz/xzcat explicitly before unpacking its sources.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig1-dev libfreetype-dev libegl1-mesa-dev libgl1-mesa-dev libudev-dev cmake autoconf automake libtool gettext git xz-utils diffutils findutils && rm -rf /var/lib/apt/lists/*
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh && sh /tmp/rustup.sh -y --profile minimal --default-toolchain $toolchain && rm /tmp/rustup.sh
+ENV PATH="/root/.cargo/bin:\$PATH"
+DOCKER
+    image="localhost/maprisma-control-builder:$toolchain-ubuntu24.04"
+    if ! podman image exists "$image"; then
+        if [[ $bootstrap_network == none ]]; then
+            echo 'Builder not cached. Network is disabled by default.' >&2
+            echo 'Prepare once with --allow-bootstrap-network (apt/rustup downloads), then reuse offline.' >&2
+            exit 1
+        fi
+        # podman's own rootless network (pasta/slirp4netns): "--network default" names a network it can't use
+        podman build -t "$image" -f "$work/Containerfile" "$work"
+    fi
+    # Source is read-only, copied into ephemeral container storage. No host target reuse.
+    mkdir "$work/bin"
+    podman run --rm --network none --user 0 \
+        -v "$root:/source:ro" -v "$work/bin:/output:rw" \
+        -v "$cargo_home/registry:/root/.cargo/registry:O" -v "$cargo_home/git:/root/.cargo/git:O" \
+        "$image" bash -euc '
+            mkdir /build; tar -C /source --exclude=./target --exclude=./dist --exclude=./.git -cf - . | tar -C /build -xf -; cd /build
+            rm -rf target dist .cargo
+            cargo build --release --locked --offline
+            cp target/release/maprisma-applet target/release/maprisma-control-tray /output/
+        '
+fi
+highest=$(objdump -T "$work/bin/maprisma-applet" "$work/bin/maprisma-control-tray" |
+    sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' | sort -Vu | tail -n1)
+[[ $highest =~ ^2\.[0-9]+$ ]] || { echo 'No valid GLIBC symbol baseline found.' >&2; exit 1; }
+echo "Highest GLIBC symbol: $highest (maximum 2.39)"
+[[ $(printf '%s\n' "$highest" 2.39 | sort -V | tail -n1) == 2.39 ]] || { echo 'GLIBC baseline exceeded; refusing archive.' >&2; exit 1; }
+name="maprisma-control-$version"
+stage="$work/$name"
+mkdir -p "$stage/bin" "$stage/share/icons/hicolor/scalable/apps" "$stage/share/applications" "$stage/share/autostart"
+cp "$work/bin/"* "$stage/bin/"
+id=io.github.ubruckhaus.CosmicMaprisma
+cp "data/icons/$id-symbolic.svg" "$stage/share/icons/hicolor/scalable/apps/"
+cp data/icons/maprisma-active-symbolic.svg "$stage/share/icons/hicolor/scalable/apps/$id-active-symbolic.svg"
+cp data/icons/maprisma-off-symbolic.svg "$stage/share/icons/hicolor/scalable/apps/$id-off-symbolic.svg"
+sed '/^Exec=/d' "data/$id.desktop" > "$stage/share/applications/$id.desktop"
+sed '/^Exec=/d' data/com.maprisma.Control.Tray.desktop > "$stage/share/autostart/com.maprisma.Control.Tray.desktop"
+cp packaging/install.sh packaging/uninstall.sh LICENSE README.md "$stage/"
+printf '%s\n' "$highest" > "$stage/glibc"
+chmod 755 "$stage/bin/"* "$stage/"*.sh
+find "$stage" -type d -exec chmod 755 {} +
+find "$stage/share" -type f -exec chmod 644 {} +
+output="$name-x86_64"
+[[ $local_build == 0 ]] || output="$output-local-test"
+tar --sort=name --owner=0 --group=0 --numeric-owner -czf "dist/$output.tar.gz" -C "$work" "$name"
+(cd dist && sha256sum "$output.tar.gz" > "$output.tar.gz.sha256")
+echo "Built dist/$output.tar.gz"

@@ -18,3 +18,58 @@ While the popup (or the `--window` window) has the keyboard, **F12** (without Ct
 **Corners** in the menu: *Like the desktop (N px)* (the default: the COSMIC theme exactly as it is, the native look; N is the theme's medium corner radius, 16, 8 or 2 px by COSMIC Settings › Appearance, 16 px where there is no COSMIC theme, e.g. on KDE), *Slightly rounded (6 px)*, *Rounded (12 px)* or *Square*, as in the other Maprisma COSMIC apps. With one of the last three, popups, cards, the note card and drop-down menus take that radius; drop-downs, text fields and menu rows at most 8 px; small parts (bars and their tracks, slider tracks, check boxes) at most 4 px; pills (libcosmic's buttons and toggles, round dots) stay round, or square in *Square*. libcosmic's widgets take their corners from the theme, so the popup's content is drawn with a copy of the active theme with these corner radii (iced's `themer`); slider knobs take the full radius. The panel button keeps the panel's look. Stored as `corners=desktop|slight|rounded|square` in `settings.conf`; a file without it stays valid and means *Like the desktop*.
 
 MIT license.
+
+## Install from a release
+
+Download `maprisma-control-<version>-x86_64.tar.gz` and its `.sha256` file from
+[Releases](https://github.com/maprisma/control/releases). In the download directory,
+replace `<version>` in these commands with the downloaded version:
+
+```sh
+sha256sum -c maprisma-control-<version>-x86_64.tar.gz.sha256
+tar -xzf maprisma-control-<version>-x86_64.tar.gz
+cd maprisma-control-<version>
+./install.sh
+```
+
+This is a per-user installation for x86_64 Linux with GNU glibc (the archive records
+its required version, at most 2.39). It checks both binaries' runtime libraries and
+prints distribution package hints if dependencies are missing. No Cargo or Rust is
+needed. The installer requires Bash, coreutils, `ldd`, and `flock` (util-linux).
+
+It installs the binaries and uninstaller in `~/.local/lib/maprisma-control`, command
+links in `~/.local/bin`, three symbolic icons and the COSMIC applet entry under
+`${XDG_DATA_HOME:-~/.local/share}`, and the KDE/Hyprland tray autostart entry under
+`${XDG_CONFIG_HOME:-~/.config}/autostart`. Both integrations are always installed;
+the tray autostart is limited to KDE and Hyprland, and the applet entry is for COSMIC.
+Re-running the installer upgrades through a rollback journal and refuses to overwrite
+foreign or modified integration files. Keep the same XDG directories when upgrading
+or uninstalling.
+
+In **COSMIC**, add Control in **COSMIC Settings > Desktop > Panel > Applets**.
+An already-placed applet restarts at the next login or when the panel restarts.
+The installer never restarts the panel. In **KDE Plasma**, the tray starts now when a
+session bus is available, and at subsequent logins. **Hyprland** needs a bar with a
+system tray. With XDG autostart (for example uwsm), the tray starts at login; otherwise
+use the installer's absolute quoted `exec-once` command in your configuration.
+It prints the hyprlang form and plain command; Lua startup syntax is not verified.
+The installer never edits your Hyprland config.
+
+Uninstall with `~/.local/lib/maprisma-control/uninstall.sh` (or `./uninstall.sh`
+in the extracted archive). Add `--purge` to also remove
+`${XDG_CONFIG_HOME:-~/.config}/maprisma-control`. Modified integration files are
+kept and reported. An invalid receipt prevents removal.
+
+**Maprisma Settings users:** keep updating and removing Control through Settings.
+This installer refuses installations managed by Settings (including its old
+`maprisma-manager` receipt directory).
+
+For development, the repository's existing `./install.sh` still builds from source
+with Cargo. Release maintainers use `tools/build-release`: it vendors already cached
+Cargo sources offline and builds in an Ubuntu 24.04 container with the host's exact
+Rust version (libcosmic requires Rust 1.93 or newer). The first builder preparation
+requires `--allow-bootstrap-network` for apt/rustup downloads; subsequent runs reuse
+the cached builder and compilation always runs with networking disabled. The default
+permits only Podman image pulls and otherwise refuses uncached dependencies. Populate
+the host Cargo cache separately before building. `--no-container` is a local test
+build, marked in its filename; it still fails if either binary exceeds GLIBC 2.39.
