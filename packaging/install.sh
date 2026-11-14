@@ -94,12 +94,23 @@ if [[ $mode == install ]]; then
         [[ ! $output =~ not\ found|version.*not\ found|version.*required ]] || die "$output; install runtime dependencies: $hint"
     done
 fi
-mkdir -p -- "$base"
+made_dirs=$(LC_ALL=C mkdir -pv -- "$base" | sed -n "s/^mkdir: created directory '\(.*\)'$/\1/p")
+lock_made=0
+exists "$base/.maprisma-control-install.lock" || lock_made=1
 exec 9>>"$base/.maprisma-control-install.lock"
 flock -x 9
 # A refused run and a finished uninstall leave no lock file behind (the transaction's own
 # rollback trap replaces this one while an install runs).
-trap '[[ -e $folder || -e $journal ]] || rm -f -- "$base/.maprisma-control-install.lock"' EXIT
+drop_lock() {
+    if [[ $lock_made == 1 || ! -e $folder && ! -e $journal ]]; then
+        rm -f -- "$base/.maprisma-control-install.lock"
+    fi
+    local d
+    while IFS= read -r d; do
+        [[ -z $d ]] || rmdir -- "$d" 2>/dev/null || true
+    done < <(tac <<< "$made_dirs")
+}
+trap drop_lock EXIT
 settings_check
 tray_pids() {
     local root=$1 proc exe
@@ -303,7 +314,7 @@ for i in "${!names[@]}"; do
 done
 mkdir -- "$journal"
 context > "$journal/context"
-rollback() { local status=$?; trap - EXIT; if [[ $status != 0 ]]; then recover; fi; exit "$status"; }
+rollback() { local status=$?; trap - EXIT; if [[ $status != 0 ]]; then recover; drop_lock; fi; exit "$status"; }
 trap rollback EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM

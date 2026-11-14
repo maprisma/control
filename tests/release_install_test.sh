@@ -36,6 +36,19 @@ printf '99.0\n' > "$archive/glibc"
 refuse install_release
 [[ ! -e $HOME/.local ]]
 printf '2.17\n' > "$archive/glibc"
+# Refusals after acquiring the lock must also remove its newly made parents.
+for manager in maprisma-settings maprisma-manager; do
+    mkdir -p "$XDG_STATE_HOME/$manager/installed"
+    touch "$XDG_STATE_HOME/$manager/installed/control.json"
+    refuse install_release
+    [[ ! -e $HOME/.local ]]
+    rm "$XDG_STATE_HOME/$manager/installed/control.json"
+done
+mkdir -p "$XDG_DATA_HOME/applications"
+touch "$desktop"
+refuse install_release
+[[ ! -e $HOME/.local ]]
+rm "$desktop"
 install_release
 [[ -x $folder/maprisma-applet && -L $HOME/.local/bin/maprisma-applet ]]
 [[ $(grep '^Exec=' "$desktop") == "Exec=\"$folder/maprisma-applet\"" ]]

@@ -11,18 +11,15 @@ use zbus::{
 type Props = HashMap<String, OwnedValue>;
 type Layout = (i32, Props, Vec<OwnedValue>);
 type Pixmaps = Vec<(i32, i32, Vec<u8>)>;
-/// The tray icon: a name of its own (Maprisma Manager can change it).
-const ICON: &str = "io.github.ubruckhaus.CosmicMaprisma-symbolic";
-/// Maprisma's robot in the theme accent while Maprisma runs (data/icons/maprisma-active-symbolic.svg),
-/// as every Maprisma tray shows its active state.
-const ICON_ACTIVE: &str = "io.github.ubruckhaus.CosmicMaprisma-active-symbolic";
-/// The plain symbolic robot while Maprisma is stopped (data/icons/maprisma-off-symbolic.svg).
-const ICON_OFF: &str = "io.github.ubruckhaus.CosmicMaprisma-off-symbolic";
-/// The bar's robot: green while Maprisma runs, plain when it is stopped.
-fn icon_for(running: &Option<Running>) -> &'static str {
-    if running.is_some() { ICON_ACTIVE } else { ICON_OFF }
-}
+mod icon;
+#[allow(dead_code)]
+#[path = "../look.rs"]
+mod look;
+#[allow(dead_code)]
+#[path = "../corners.rs"]
+mod corners;
 struct State {
+    colors: icon::Colors,
     running: Option<Running>,
     pending: Option<(Pending, std::time::Instant)>,
     menu: model::Item,
@@ -231,11 +228,12 @@ impl Tray {
     }
     #[zbus(property)]
     async fn icon_name(&self) -> &str {
-        icon_for(&self.state.lock().await.running)
+        ""
     }
     #[zbus(property)]
-    fn icon_pixmap(&self) -> Pixmaps {
-        vec![]
+    async fn icon_pixmap(&self) -> Pixmaps {
+        let s = self.state.lock().await;
+        icon::pixmaps(s.colors, s.running.is_some())
     }
     #[zbus(property)]
     fn overlay_icon_name(&self) -> &str {
@@ -247,11 +245,11 @@ impl Tray {
     }
     #[zbus(property)]
     fn attention_icon_name(&self) -> &str {
-        ICON_ACTIVE
+        ""
     }
     #[zbus(property)]
-    fn attention_icon_pixmap(&self) -> Pixmaps {
-        vec![]
+    async fn attention_icon_pixmap(&self) -> Pixmaps {
+        icon::pixmaps(self.state.lock().await.colors, true)
     }
     #[zbus(property)]
     fn attention_movie_name(&self) -> &str {
@@ -260,8 +258,8 @@ impl Tray {
     #[zbus(property)]
     async fn tool_tip(&self) -> (String, Pixmaps, String, String) {
         (
-            ICON.into(),
-            vec![],
+            String::new(),
+            self.icon_pixmap().await,
             tr("Maprisma Control"),
             self.state.lock().await.tooltip(),
         )
@@ -294,11 +292,13 @@ async fn publish(
     state: &Shared,
     action: Option<Action>,
 ) -> zbus::Result<()> {
+    let colors = icon::colors(connection).await;
     let mut s = state.lock().await;
     let before = s.menu.clone();
     let old_status = s.status();
     let old_tooltip = s.tooltip();
-    let old_icon = icon_for(&s.running);
+    let old_icon = (s.running.is_some(), s.colors);
+    s.colors = colors;
     s.refresh();
     if let Some(action) = action {
         let running = s.running.clone();
@@ -324,7 +324,7 @@ async fn publish(
     let revision = s.revision;
     let status = s.status();
     let tooltip_changed = old_tooltip != s.tooltip();
-    let icon_changed = old_icon != icon_for(&s.running);
+    let icon_changed = old_icon != (s.running.is_some(), s.colors);
     drop(s);
     if changed {
         Menu::layout_updated(&SignalEmitter::new(connection, "/MenuBar")?, revision, 0).await?;
@@ -347,6 +347,7 @@ async fn publish(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut initial = State {
+        colors: icon::choose(None, None),
         running: None,
         pending: None,
         menu: model::menu(&None, None, "", false, false),
@@ -434,12 +435,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     #[test]
-    fn tray_logo_follows_maprisma() {
-        assert_eq!(icon_for(&None), ICON_OFF);
-        let running: Option<Running> = Some(Default::default());
-        assert_eq!(icon_for(&running), ICON_ACTIVE);
-    }
-    #[test]
     fn dbus_layout_signature_depth_and_properties() {
         let menu = model::menu(&None, None, "", false, true);
         assert_eq!(
@@ -457,6 +452,7 @@ mod tests {
     #[tokio::test]
     async fn events_and_groups_without_bus() {
         let state = Arc::new(Mutex::new(State {
+            colors: icon::choose(None, None),
             running: None,
             pending: None,
             menu: model::menu(&None, None, "", false, true),
