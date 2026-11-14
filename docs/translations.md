@@ -1,5 +1,5 @@
 Maprisma Control includes English, Deutsch, Français, Español, Italiano,
-Português, Nederlands and Polski. Choose Language in the COSMIC popup,
+Português, Nederlands and Polski. Choose Language on the settings page (the gear) of the COSMIC popup,
 `maprisma-applet --window`, or the KDE tray submenu. The check mark identifies
 the saved choice. Changes apply immediately; other running Control instances
 read the shared setting on their next refresh (normally within two seconds).

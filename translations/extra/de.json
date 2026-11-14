@@ -32,5 +32,7 @@
   "Like the desktop ({0} px)": "Wie der Desktop ({0} px)",
   "Slightly rounded ({0} px)": "Leicht abgerundet ({0} px)",
   "Rounded ({0} px)": "Abgerundet ({0} px)",
-  "Open Maprisma Control": "Maprisma-Steuerung öffnen"
+  "Open Maprisma Control": "Maprisma-Steuerung öffnen",
+  "Settings": "Einstellungen",
+  "Back": "Zurück"
 }

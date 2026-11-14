@@ -65,17 +65,26 @@ fn window_start_size() -> window_size::Size {
 enum EscStep {
     /// Skip the screenshot's note (or close its error).
     Note,
+    /// Close the open Language / Corners list.
+    Menus,
+    /// Leave the settings page.
+    Back,
     /// Close the window (`--window`) or the popup.
     Close,
     Nothing,
 }
 
-/// `shown`: Esc came from the window or the open popup (not the panel button).
-fn esc_step(shown: bool, note: bool) -> EscStep {
+/// `shown`: Esc came from the window or the open popup (not the panel button); `note`: the
+/// screenshot card shows; `menus`: a list is open; `settings`: the settings page shows.
+fn esc_step(shown: bool, note: bool, menus: bool, settings: bool) -> EscStep {
     if !shown {
         EscStep::Nothing
     } else if note {
         EscStep::Note
+    } else if menus {
+        EscStep::Menus
+    } else if settings {
+        EscStep::Back
     } else {
         EscStep::Close
     }
@@ -105,13 +114,6 @@ fn error_text(theme: &cosmic::Theme) -> iced_text::Style {
         color: Some(Color::from(theme.cosmic().destructive_color())),
         ..Default::default()
     }
-}
-
-// A popup section heading: small, bold, upper case, dim (as in the other Maprisma applets).
-fn section<'a>(title: String) -> Element<'a, Message> {
-    container(text::caption_heading(title.to_uppercase()).class(theme::Text::Custom(dim_text)))
-        .padding([8, 16, 4, 16])
-        .into()
 }
 
 fn fill(status: Option<Status>, radius: f32) -> theme::Container<'static> {
@@ -167,6 +169,10 @@ struct Control {
     corners: String, // Settings › Corners (corners.rs)
     screenshot_key: bool,
     resize: window_size::Debounce,
+    /// The settings page (Language, F12, Corners) is shown instead of the menu.
+    settings_open: bool,
+    language_open: bool,
+    corners_open: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -188,6 +194,9 @@ enum Message {
     Shot(ShotMsg),
     ScreenshotKey,
     Corners(usize),
+    ToggleSettings,
+    ToggleLanguage,
+    ToggleCorners,
 }
 
 impl Control {
@@ -273,6 +282,13 @@ impl Control {
                     .align_y(Alignment::Center)
             ]
             .spacing(4),
+            space::horizontal().width(Length::Fill),
+            // Settings at the header's right end, as in Maprisma Launcher.
+            cosmic::widget::tooltip(
+                button::icon(icon::from_name("emblem-system-symbolic").symbolic(true)).on_press(Message::ToggleSettings),
+                text::body(tr("Settings")),
+                cosmic::widget::tooltip::Position::Bottom,
+            ),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
@@ -319,32 +335,6 @@ impl Control {
             )
             .push(menu_button(text::body(tr("Open the test folder"))).on_press(Message::OpenFolder));
 
-        actions = actions.push(divider::horizontal::default()).push(section(tr("Language")));
-        let preference = i18n::preference();
-        for (index, label) in language_options().into_iter().enumerate() {
-            let label = if i18n::CODES[index] == preference { format!("✓ {label}") } else { label };
-            actions = actions.push(menu_button(text::body(label)).on_press(Message::Language(index)));
-        }
-        let check = |on: bool, label: String| if on { format!("✓ {label}") } else { label };
-        actions = actions
-            .push(divider::horizontal::default())
-            .push(
-                menu_button(text::body(check(self.screenshot_key, tr("F12 saves a screenshot"))))
-                    .on_press(Message::ScreenshotKey),
-            )
-            .push(section(tr("Corners")));
-        let desktop = corners::desktop_radius().round().to_string();
-        let labels = [
-            trf("Like the desktop ({0} px)", &[&desktop]),
-            trf("Slightly rounded ({0} px)", &["6"]),
-            trf("Rounded ({0} px)", &["12"]),
-            tr("Square"),
-        ];
-        for (index, label) in labels.into_iter().enumerate() {
-            actions = actions.push(
-                menu_button(text::body(check(corners::CHOICES.iter().position(|c| *c == self.corners).unwrap_or(0) == index, label))).on_press(Message::Corners(index)),
-            );
-        }
         if let Some(error) = &self.error {
             actions = actions.push(padded_control(text::body(error.clone()).class(theme::Text::Custom(error_text))));
         }
@@ -352,6 +342,65 @@ impl Control {
             .width(self.width())
             .padding([0, 0, 8, 0])
             .into()
+    }
+
+    /// Settings (as Maprisma Launcher's page): ← Back and the title, then one row per setting,
+    /// words at the left and the control at the right; a list opens under its row.
+    fn settings_page(&self) -> Element<'_, Message> {
+        let header = row![
+            button::text(tr("Back")).leading_icon(icon::from_name("go-previous-symbolic").size(16)).on_press(Message::ToggleSettings),
+            space::horizontal().width(Length::Fill),
+            dim(tr("Settings").to_uppercase()),
+        ]
+        .align_y(Alignment::Center);
+        let choice = |label: String, open: bool, message: Message| -> Element<'static, Message> {
+            button::text(label)
+                .trailing_icon(icon::from_name(if open { "pan-up-symbolic" } else { "pan-down-symbolic" }).size(16))
+                .on_press(message)
+                .into()
+        };
+        let setting = |label: String, control: Element<'static, Message>| {
+            padded_control(row![text::body(label), space::horizontal().width(Length::Fill), control].spacing(12).align_y(Alignment::Center))
+        };
+        let mut page = column![padded_control(header), divider::horizontal::default()];
+        let languages = language_options();
+        let preference = i18n::preference();
+        let current = i18n::CODES.iter().position(|c| *c == preference).unwrap_or(0);
+        page = page.push(setting(tr("Language"), choice(languages[current].clone(), self.language_open, Message::ToggleLanguage)));
+        if self.language_open {
+            for (index, label) in languages.into_iter().enumerate() {
+                let label = if index == current { format!("✓ {label}") } else { label };
+                page = page.push(menu_button(text::body(label)).on_press(Message::Language(index)));
+            }
+        }
+        page = page.push(setting(
+            tr("F12 saves a screenshot"),
+            cosmic::widget::toggler(self.screenshot_key).on_toggle(|_| Message::ScreenshotKey).into(),
+        ));
+        let desktop = corners::desktop_radius().round().to_string();
+        let labels = [
+            trf("Like the desktop ({0} px)", &[&desktop]),
+            trf("Slightly rounded ({0} px)", &["6"]),
+            trf("Rounded ({0} px)", &["12"]),
+            tr("Square"),
+        ];
+        let current = corners::CHOICES.iter().position(|c| *c == self.corners).unwrap_or(0);
+        page = page.push(setting(tr("Corners"), choice(labels[current].clone(), self.corners_open, Message::ToggleCorners)));
+        if self.corners_open {
+            for (index, label) in labels.into_iter().enumerate() {
+                let label = if index == current { format!("✓ {label}") } else { label };
+                page = page.push(menu_button(text::body(label)).on_press(Message::Corners(index)));
+            }
+        }
+        if let Some(error) = &self.error {
+            page = page.push(padded_control(text::body(error.clone()).class(theme::Text::Custom(error_text))));
+        }
+        page.width(self.width()).padding([0, 0, 8, 0]).into()
+    }
+
+    /// The menu, or the settings page while it is open.
+    fn page(&self) -> Element<'_, Message> {
+        if self.settings_open { self.settings_page() } else { self.menu() }
     }
 
     // The popup's width; the window (--window) fills its width like the other Maprisma windows.
@@ -386,10 +435,17 @@ impl Control {
         }
     }
 
+    fn close_settings(&mut self) {
+        self.settings_open = false;
+        self.language_open = false;
+        self.corners_open = false;
+    }
+
     fn close_popup(&mut self) -> Task<Message> {
         match self.popup.take() {
             Some(popup) => {
                 self.shot.closed(popup);
+                self.close_settings();
                 destroy_popup(popup)
             }
             None => Task::none(),
@@ -444,6 +500,8 @@ impl cosmic::Application for Control {
             standalone,
             version: version(),
             shot: Shot::new(SHOT_FOLDER),
+            // Debug builds only: start on the settings page (for off-screen screenshots).
+            settings_open: cfg!(debug_assertions) && std::env::var("MAPRISMA_SHOT_PAGE").as_deref() == Ok("settings"),
             ..Default::default()
         };
         control.refresh();
@@ -511,7 +569,21 @@ impl cosmic::Application for Control {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::ToggleSettings => {
+                let open = !self.settings_open;
+                self.close_settings();
+                self.settings_open = open;
+            }
+            Message::ToggleLanguage => {
+                self.language_open = !self.language_open;
+                self.corners_open = false;
+            }
+            Message::ToggleCorners => {
+                self.corners_open = !self.corners_open;
+                self.language_open = false;
+            }
             Message::Language(index) => {
+                self.language_open = false;
                 self.error = i18n::set_language(index).err().map(|error|
                     trf("Could not save language: {0}", &[&error.to_string()]));
                 if self.standalone {
@@ -527,10 +599,15 @@ impl cosmic::Application for Control {
             Message::Shot(ShotMsg::Escape(_)) => {}
             Message::Escape(id) => {
                 let shown = self.shot_target(id);
-                match esc_step(shown, self.shot.showing(id)) {
+                match esc_step(shown, self.shot.showing(id), self.language_open || self.corners_open, self.settings_open) {
                     EscStep::Note => {
                         return self.shot.update(ShotMsg::Escape(id), self.screenshot_key, true, Message::Shot);
                     }
+                    EscStep::Menus => {
+                        self.language_open = false;
+                        self.corners_open = false;
+                    }
+                    EscStep::Back => self.close_settings(),
                     // Like the window's own close; the popup like a click on the icon.
                     EscStep::Close if self.standalone => {
                         let _ = self.update(Message::CloseRequested(id)); // only bookkeeping, no task
@@ -556,6 +633,7 @@ impl cosmic::Application for Control {
                 return self.read_look();
             }
             Message::Corners(index) => {
+                self.corners_open = false;
                 let corners = corners::CHOICES.get(index).copied().unwrap_or("desktop");
                 self.error = i18n::set_setting("corners", corners).err().map(|error| error.to_string());
                 return self.read_look();
@@ -571,6 +649,7 @@ impl cosmic::Application for Control {
                 }
                 if self.popup == Some(id) {
                     self.popup = None;
+                    self.close_settings();
                 }
             }
             Message::TogglePopup => {
@@ -643,7 +722,7 @@ impl cosmic::Application for Control {
         crate::look::keep_fonts();
         if self.standalone {
             let id = self.core.main_window_id().unwrap_or(window::Id::RESERVED);
-            return corners::apply_window(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.menu())));
+            return corners::apply_window(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.page())));
         }
         let horizontal = matches!(
             self.core.applet.anchor,
@@ -670,9 +749,9 @@ impl cosmic::Application for Control {
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
         crate::look::keep_fonts();
         if self.standalone {
-            return corners::apply_window(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.menu())));
+            return corners::apply_window(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.page())));
         }
-        corners::apply(&self.corners, self.core.applet.popup_container(self.with_card(id, self.menu())))
+        corners::apply(&self.corners, self.core.applet.popup_container(self.with_card(id, self.page())))
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
@@ -688,11 +767,13 @@ mod tests {
 
     #[test]
     fn esc_closes_the_innermost_thing_first() {
-        assert_eq!(esc_step(true, true), EscStep::Note);
-        assert_eq!(esc_step(true, false), EscStep::Close);
+        assert_eq!(esc_step(true, true, true, true), EscStep::Note);
+        assert_eq!(esc_step(true, false, true, true), EscStep::Menus);
+        assert_eq!(esc_step(true, false, false, true), EscStep::Back);
+        assert_eq!(esc_step(true, false, false, false), EscStep::Close);
         // Not from the window or the open popup (e.g. the panel button): nothing.
-        assert_eq!(esc_step(false, true), EscStep::Nothing);
-        assert_eq!(esc_step(false, false), EscStep::Nothing);
+        assert_eq!(esc_step(false, true, true, true), EscStep::Nothing);
+        assert_eq!(esc_step(false, false, false, false), EscStep::Nothing);
     }
 
     #[test]
