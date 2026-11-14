@@ -95,8 +95,48 @@ for step in staged old-moved swapped outer-0 outer-3 outer-6; do
     [[ ! -e $folder && ! -e $desktop && ! -L $HOME/.local/bin/maprisma-applet ]]
     install_release
 done
-# A malformed journal must preserve both live files and the journal itself.
 journal="$HOME/.local/lib/.maprisma-control-transaction"
+# Preserve post-interruption edits to links and regular files during recovery.
+for changed in 0 3; do
+    icon="$XDG_DATA_HOME/icons/hicolor/scalable/apps/$id-symbolic.svg"
+    active="$XDG_DATA_HOME/icons/hicolor/scalable/apps/$id-active-symbolic.svg"
+    cp "$icon" "$tmp/old-icon"
+    cp "$active" "$tmp/old-active"
+    cp "$folder/maprisma-applet" "$tmp/old-applet"
+    echo '<!-- upgrade -->' >> "$archive/share/icons/hicolor/scalable/apps/$id-symbolic.svg"
+    echo '<!-- upgrade -->' >> "$archive/share/icons/hicolor/scalable/apps/$id-active-symbolic.svg"
+    export MAPRISMA_INSTALL_TEST=1 MAPRISMA_INSTALL_TEST_FAIL_AT=outer-3
+    refuse install_release
+    unset MAPRISMA_INSTALL_TEST_FAIL_AT
+    if [[ $changed == 0 ]]; then
+        edited="$HOME/.local/bin/maprisma-applet"
+        rm "$edited"
+        ln -s "$tmp/custom-applet" "$edited"
+    else
+        edited=$active
+        echo '<!-- user edit -->' >> "$edited"
+        cp "$edited" "$tmp/edited"
+    fi
+    # Recovery rolls back the upgrade; installation then refuses the edited file.
+    refuse install_release
+    grep -Fx "Keeping changed file: $edited" "$tmp/log"
+    [[ ! -e $journal ]]
+    cmp "$tmp/old-icon" "$icon"
+    cmp "$tmp/old-applet" "$folder/maprisma-applet"
+    if [[ $changed == 0 ]]; then
+        [[ $(readlink "$edited") == "$tmp/custom-applet" ]]
+        cmp "$tmp/old-active" "$active"
+    else
+        cmp "$tmp/edited" "$edited"
+        [[ $(readlink "$HOME/.local/bin/maprisma-applet") == "$folder/maprisma-applet" ]]
+    fi
+    refuse install_release
+    uninstall_release
+    [[ -e $edited || -L $edited ]]
+    rm "$edited"
+    install_release
+done
+# A malformed journal must preserve both live files and the journal itself.
 for malformed in missing-backup marker-link marker-directory unexpected backup-name backup-content impossible; do
     export MAPRISMA_INSTALL_TEST=1 MAPRISMA_INSTALL_TEST_FAIL_AT=staged
     refuse install_release

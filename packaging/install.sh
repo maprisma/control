@@ -251,14 +251,22 @@ recover() {
         for i in "${!names[@]}"; do
             p=${paths[$i]}
             rm -f -- "$p.maprisma-control-new"
-            # Accepted risk: edits made between an interrupted run and the next
-            # invocation are overwritten when recovery restores outer files.
+            # Restore only content still owned by the interrupted run. Compare
+            # with its staged outer files, so later edits (and files already
+            # restored by an interrupted recovery) survive repeated recovery.
             if [[ -f $journal/outer-started ]]; then
-                if exists "$journal/backup/$i"; then
-                    rm -f -- "$p"
-                    cp -a -- "$journal/backup/$i" "$p"
-                else
-                    rm -f -- "$p"
+                if { [[ $i -lt 2 && -L $p ]] &&
+                    [[ $(readlink -- "$p") == "$(readlink -- "$journal/outer/$i")" ]]; } ||
+                    { [[ $i -ge 2 && -f $p && ! -L $p ]] &&
+                    [[ $(sha256sum -- "$p" | cut -d' ' -f1) == "$(sha256sum -- "$journal/outer/$i" | cut -d' ' -f1)" ]]; }; then
+                    if exists "$journal/backup/$i"; then
+                        cp -a -- "$journal/backup/$i" "$p.maprisma-control-new"
+                        mv -Tf -- "$p.maprisma-control-new" "$p"
+                    else
+                        rm -f -- "$p"
+                    fi
+                elif exists "$p"; then
+                    echo "Keeping changed file: $p"
                 fi
             fi
         done
