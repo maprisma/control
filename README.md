@@ -2,6 +2,8 @@
 
 A COSMIC panel applet that starts and stops Maprisma (`maprisma-applet`; `maprisma-applet --window` opens the same menu in a window, and `maprisma-control-tray` is the KDE tray; its robot is green while Maprisma runs and plain when it is stopped). Interface languages: see [docs/translations.md](docs/translations.md). Tests: `cargo test --offline`.
 
+Control finds Maprisma in this order: executable `~/.local/bin/maprisma`, executable `maprisma` in absolute directories on `PATH`, the launch record `$XDG_STATE_HOME/maprisma/launch.json` (default `~/.local/state/maprisma/launch.json`), then `/usr/bin/maprisma`. Maprisma writes the record when it starts, allowing Control to find portable bundles and AppImages after their first launch. Control validates the record and executable ownership and permissions before using it; extraction-mode AppImages receive `--appimage-extract-and-run` for Start and Toggle. Test-session launches pass only the discovered executable path to the development `start.sh`.
+
 ## F12: a screenshot with a note
 
 While the popup (or the `--window` window) has the keyboard, **F12** (without Ctrl, Shift, Alt or Super) saves a picture of it, for telling what is wrong with Control itself (Maprisma's own F12 is separate):

@@ -10,21 +10,175 @@ pub const PROCESS: &str = "maprisma"; // /proc/<pid>/comm of the app (the core i
 pub const BINARY: &str = "/usr/bin/maprisma";
 pub const DEFAULT_TEST_DIR: &str = "/mnt/Data/maprisma-test";
 
-/// User-installed `~/.local/bin/maprisma` when present, otherwise `/usr/bin/maprisma`.
-pub fn binary() -> PathBuf {
-    binary_for_home(std::env::var_os("HOME").as_deref().map(Path::new))
+/// A discovered program and the fixed arguments required by its packaging.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchSpec {
+    pub path: PathBuf,
+    pub mode: LaunchMode,
 }
 
-fn binary_for_home(home: Option<&Path>) -> PathBuf {
-    if let Some(home) = home {
-        let local = home.join(".local/bin/maprisma");
-        // only a program that can run: a copy without the x bit must not hide /usr/bin's
-        use std::os::unix::fs::PermissionsExt;
-        if std::fs::metadata(&local).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0) {
-            return local;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchMode {
+    Bundle,
+    AppImage,
+    AppImageExtract,
+}
+
+impl LaunchSpec {
+    fn bundle(path: PathBuf) -> Self {
+        Self {
+            path,
+            mode: LaunchMode::Bundle,
         }
     }
-    PathBuf::from(BINARY)
+
+    fn args(&self, toggle: bool) -> Vec<&'static str> {
+        let mut args = Vec::new();
+        if self.mode == LaunchMode::AppImageExtract {
+            args.push("--appimage-extract-and-run");
+        }
+        if toggle {
+            args.push("--toggle");
+        }
+        args
+    }
+
+    fn launch(&self, toggle: bool) {
+        let path = self.path.to_string_lossy();
+        let mut argv = vec![path.as_ref()];
+        argv.extend(self.args(toggle));
+        spawn(&argv, None);
+    }
+}
+
+pub fn binary() -> LaunchSpec {
+    discover(
+        std::env::var_os("HOME").as_deref().map(Path::new),
+        std::env::var_os("PATH").as_deref(),
+        std::env::var_os("XDG_STATE_HOME").as_deref().map(Path::new),
+        uid(),
+    )
+}
+
+fn executable(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.mode() & 0o111 != 0)
+}
+
+fn discover(
+    home: Option<&Path>,
+    path: Option<&std::ffi::OsStr>,
+    state: Option<&Path>,
+    me: u32,
+) -> LaunchSpec {
+    if let Some(local) = home
+        .map(|h| h.join(".local/bin/maprisma"))
+        .filter(|p| executable(p))
+    {
+        return LaunchSpec::bundle(local);
+    }
+    if let Some(path) = path {
+        for dir in std::env::split_paths(path).filter(|p| p.is_absolute()) {
+            let candidate = dir.join("maprisma");
+            if executable(&candidate) {
+                return LaunchSpec::bundle(candidate);
+            }
+        }
+    }
+    let state = state
+        .filter(|p| p.is_absolute())
+        .map(Path::to_path_buf)
+        .or_else(|| home.map(|h| h.join(".local/state")));
+    if let Some(spec) = state.and_then(|s| launch_record(&s.join("maprisma/launch.json"), me)) {
+        return spec;
+    }
+    LaunchSpec::bundle(BINARY.into())
+}
+
+fn private_owner(owner: u32, mode: u32, me: u32) -> bool {
+    owner == me && mode & 0o022 == 0
+}
+
+fn safe_exec_owner(owner: u32, mode: u32, me: u32) -> bool {
+    (owner == me || owner == 0) && mode & 0o022 == 0
+}
+
+fn safe_ancestor(owner: u32, mode: u32) -> bool {
+    mode & 0o022 == 0 || (owner == 0 && mode & 0o1000 != 0)
+}
+
+fn safe_exec(path: &Path, me: u32) -> Option<()> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let direct = std::fs::symlink_metadata(path).ok()?;
+    let resolved = std::fs::canonicalize(path).ok()?;
+    let meta = std::fs::metadata(&resolved).ok()?;
+    if !direct.is_file()
+        || !meta.is_file()
+        || direct.dev() != meta.dev()
+        || direct.ino() != meta.ino()
+        || meta.mode() & 0o111 == 0
+        || !safe_exec_owner(meta.uid(), meta.mode(), me)
+    {
+        return None;
+    }
+    // Check both the supplied route (including symlink parents) and its resolved route.
+    for route in [path, resolved.as_path()] {
+        for ancestor in route.ancestors().skip(1) {
+            let meta = std::fs::metadata(ancestor).ok()?;
+            if !meta.is_dir() || !safe_ancestor(meta.uid(), meta.mode()) {
+                return None;
+            }
+        }
+    }
+    Some(())
+}
+
+fn launch_record(path: &Path, me: u32) -> Option<LaunchSpec> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let folder = std::fs::metadata(path.parent()?).ok()?;
+    if !folder.is_dir() || !private_owner(folder.uid(), folder.mode(), me) {
+        return None;
+    }
+    // O_NOFOLLOW and the identity check also protect the gap between lstat and open.
+    let direct = std::fs::symlink_metadata(path).ok()?;
+    if !direct.is_file() {
+        return None;
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file()
+        || meta.dev() != direct.dev()
+        || meta.ino() != direct.ino()
+        || !private_owner(meta.uid(), meta.mode(), me)
+        || meta.len() > 4096
+    {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(4097).read_to_end(&mut bytes).ok()?;
+    if bytes.len() > 4096 {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let exec = json.get("exec")?.as_str()?;
+    if exec.contains('\0') {
+        return None;
+    }
+    let mode = match json.get("mode")?.as_str()? {
+        "bundle" => LaunchMode::Bundle,
+        "appimage" => LaunchMode::AppImage,
+        "appimage-extract" => LaunchMode::AppImageExtract,
+        _ => return None,
+    };
+    let path = PathBuf::from(exec);
+    safe_exec(&path, me)?;
+    Some(LaunchSpec { path, mode })
 }
 pub const POLL: Duration = Duration::from_secs(2);
 pub const PENDING_TIMEOUT: Duration = Duration::from_secs(20); // "Starting…" / "Stopping…" at most this long
@@ -257,12 +411,12 @@ pub fn execute(
                         &[
                             "bash",
                             &dir.join("start.sh").to_string_lossy(),
-                            &bin.to_string_lossy(),
+                            &bin.path.to_string_lossy(),
                         ],
                         Some(&dir),
                     );
                 } else {
-                    spawn(&[&bin.to_string_lossy()], None);
+                    bin.launch(false);
                 }
                 *pending = Some((Pending::Starting, Instant::now()));
             } else if let Some(running) = running {
@@ -272,7 +426,7 @@ pub fn execute(
         }
         Action::ToggleWindow => {
             let bin = binary();
-            spawn(&[&bin.to_string_lossy(), "--toggle"], None);
+            bin.launch(true);
         }
         Action::OpenFolder => {
             let dir = running
@@ -315,6 +469,226 @@ pub fn status_text(running: &Option<Running>, pending: Option<Pending>) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct LaunchFixture(PathBuf);
+    impl LaunchFixture {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            // The sandbox maps /tmp's root owner to nobody. Keep secure-exec
+            // fixtures under target instead: the production policy must not be relaxed.
+            let base = std::env::current_dir().unwrap().join("target/launch-tests");
+            std::fs::create_dir_all(&base).unwrap();
+            let dir = base.join(format!(
+                "maprisma-launch-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&dir).unwrap();
+            chmod(&dir, 0o700);
+            Self(dir)
+        }
+        fn program(&self, name: &str) -> PathBuf {
+            let path = self.0.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            chmod(&path, 0o700);
+            path
+        }
+        fn record(&self, exec: &Path, mode: &str) -> PathBuf {
+            let path = self.0.join("state/maprisma/launch.json");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            chmod(path.parent().unwrap(), 0o700);
+            std::fs::write(
+                &path,
+                serde_json::json!({"exec":exec,"mode":mode}).to_string(),
+            )
+            .unwrap();
+            chmod(&path, 0o600);
+            path
+        }
+    }
+    impl Drop for LaunchFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    fn chmod(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[test]
+    fn launch_owner_and_permission_policies() {
+        assert!(private_owner(123, 0o600, 123));
+        assert!(!private_owner(0, 0o600, 123));
+        assert!(!private_owner(124, 0o600, 123));
+        for bit in [0o020, 0o002] {
+            assert!(!private_owner(123, 0o600 | bit, 123));
+            assert!(!safe_exec_owner(123, 0o700 | bit, 123));
+            assert!(!safe_exec_owner(0, 0o700 | bit, 123));
+            assert!(!safe_ancestor(0, 0o755 | bit));
+            assert!(!safe_ancestor(123, 0o1755 | bit));
+            assert!(safe_ancestor(0, 0o1755 | bit));
+        }
+        assert!(safe_exec_owner(0, 0o755, 123));
+        assert!(safe_exec_owner(123, 0o700, 123));
+        assert!(!safe_exec_owner(124, 0o700, 123));
+        assert!(safe_ancestor(123, 0o755));
+    }
+
+    #[test]
+    fn record_modes_and_fixed_launch_arguments() {
+        let f = LaunchFixture::new();
+        let exec = f.program("App Image ; literal");
+        for (name, mode, first) in [
+            ("bundle", LaunchMode::Bundle, vec![]),
+            ("appimage", LaunchMode::AppImage, vec![]),
+            (
+                "appimage-extract",
+                LaunchMode::AppImageExtract,
+                vec!["--appimage-extract-and-run"],
+            ),
+        ] {
+            let spec = launch_record(&f.record(&exec, name), uid()).unwrap();
+            assert_eq!(spec.path, exec);
+            assert_eq!(spec.mode, mode);
+            assert_eq!(spec.args(false), first);
+            let mut toggle = first;
+            toggle.push("--toggle");
+            assert_eq!(spec.args(true), toggle);
+        }
+    }
+
+    #[test]
+    fn record_json_and_size_validation() {
+        let f = LaunchFixture::new();
+        let exec = f.program("program");
+        let record = f.record(&exec, "bundle");
+        for invalid in [
+            "{",
+            "[]",
+            "null",
+            "{}",
+            r#"{"exec":5,"mode":"bundle"}"#,
+            r#"{"exec":"/bin/true","mode":5}"#,
+            r#"{"exec":"relative","mode":"bundle"}"#,
+            r#"{"exec":"/bad\u0000path","mode":"bundle"}"#,
+        ] {
+            std::fs::write(&record, invalid).unwrap();
+            assert!(launch_record(&record, uid()).is_none(), "{invalid}");
+        }
+        assert!(launch_record(&f.record(&exec, "unknown"), uid()).is_none());
+        f.record(&exec, "bundle");
+        let mut bytes = std::fs::read(&record).unwrap();
+        bytes.resize(4096, b' ');
+        std::fs::write(&record, &bytes).unwrap();
+        assert!(launch_record(&record, uid()).is_some());
+        bytes.push(b' ');
+        std::fs::write(&record, bytes).unwrap();
+        assert!(launch_record(&record, uid()).is_none());
+    }
+
+    #[test]
+    fn record_file_and_folder_validation() {
+        use std::os::unix::fs::symlink;
+        let f = LaunchFixture::new();
+        let exec = f.program("program");
+        let record = f.record(&exec, "bundle");
+        assert!(launch_record(&record, uid().wrapping_add(1)).is_none());
+        for mode in [0o620, 0o602] {
+            chmod(&record, mode);
+            assert!(launch_record(&record, uid()).is_none());
+        }
+        chmod(&record, 0o600);
+        for mode in [0o720, 0o702] {
+            chmod(record.parent().unwrap(), mode);
+            assert!(launch_record(&record, uid()).is_none());
+        }
+        chmod(record.parent().unwrap(), 0o700);
+        let saved = record.with_extension("saved");
+        std::fs::rename(&record, &saved).unwrap();
+        symlink(&saved, &record).unwrap();
+        assert!(launch_record(&record, uid()).is_none());
+        std::fs::remove_file(&record).unwrap();
+        std::fs::create_dir(&record).unwrap();
+        assert!(launch_record(&record, uid()).is_none());
+        assert!(launch_record(&exec.join("launch.json"), uid()).is_none());
+    }
+
+    #[test]
+    fn executable_and_ancestor_validation() {
+        use std::os::unix::fs::symlink;
+        let f = LaunchFixture::new();
+        let exec = f.program("nested/program");
+        assert!(safe_exec(&exec, uid()).is_some());
+        for mode in [0o600, 0o720, 0o702] {
+            chmod(&exec, mode);
+            assert!(safe_exec(&exec, uid()).is_none());
+        }
+        chmod(&exec, 0o700);
+        assert!(safe_exec(&f.0, uid()).is_none());
+        assert!(safe_exec(&f.0.join("missing"), uid()).is_none());
+        assert!(safe_exec(Path::new("relative"), uid()).is_none());
+        let link = f.0.join("link");
+        symlink(&exec, &link).unwrap();
+        assert!(safe_exec(&link, uid()).is_none());
+        for mode in [0o720, 0o702] {
+            chmod(exec.parent().unwrap(), mode);
+            assert!(safe_exec(&exec, uid()).is_none());
+        }
+        chmod(exec.parent().unwrap(), 0o700);
+        // A symlinked ancestor is allowed, but its resolved directories must be safe.
+        let alias = f.0.join("alias");
+        symlink(exec.parent().unwrap(), &alias).unwrap();
+        assert!(safe_exec(&alias.join("program"), uid()).is_some());
+        chmod(exec.parent().unwrap(), 0o722);
+        assert!(safe_exec(&alias.join("program"), uid()).is_none());
+    }
+
+    #[test]
+    fn discovery_precedence_and_absolute_path_entries() {
+        let f = LaunchFixture::new();
+        let exec = f.program("portable");
+        f.record(&exec, "appimage-extract");
+        let state = f.0.join("state");
+        let discover_here =
+            |path: Option<&std::ffi::OsStr>| discover(Some(&f.0), path, Some(&state), uid());
+        assert_eq!(discover_here(None).path, exec);
+        assert_eq!(
+            discover_here(Some(std::ffi::OsStr::new(":.:relative"))).path,
+            exec
+        );
+        let path_program = f.program("path/maprisma");
+        let other = f.program("other/maprisma");
+        let path = std::env::join_paths([path_program.parent().unwrap(), other.parent().unwrap()])
+            .unwrap();
+        assert_eq!(discover_here(Some(&path)).path, path_program);
+        let local = f.program(".local/bin/maprisma");
+        assert_eq!(discover_here(Some(&path)).path, local);
+        chmod(&local, 0o600);
+        assert_eq!(discover_here(Some(&path)).path, path_program);
+        chmod(&path_program, 0o600);
+        assert_eq!(discover_here(Some(&path)).path, other);
+        chmod(&other, 0o600);
+        assert_eq!(discover_here(Some(&path)).mode, LaunchMode::AppImageExtract);
+        std::fs::write(state.join("maprisma/launch.json"), "invalid").unwrap();
+        assert_eq!(
+            discover_here(Some(&path)),
+            LaunchSpec::bundle(BINARY.into())
+        );
+        assert_eq!(
+            discover(None, None, None, uid()).path,
+            PathBuf::from(BINARY)
+        );
+        // Default state location; relative/empty XDG_STATE_HOME falls back to it.
+        f.record(&exec, "bundle");
+        std::fs::create_dir_all(f.0.join(".local")).unwrap();
+        std::fs::rename(&state, f.0.join(".local/state")).unwrap();
+        for state in [None, Some(Path::new("relative")), Some(Path::new(""))] {
+            assert_eq!(discover(Some(&f.0), None, state, uid()).path, exec);
+        }
+    }
+
     #[test]
     fn pending_completion_and_timeout() {
         let running = Some(Running::default());
@@ -418,22 +792,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    #[test]
-    fn binary_prefers_user_local_install_when_present() {
-        let dir =
-            std::env::temp_dir().join(format!("maprisma-binary-test-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join(".local/bin")).unwrap();
-        assert_eq!(binary_for_home(None), PathBuf::from(BINARY));
-        assert_eq!(binary_for_home(Some(&dir)), PathBuf::from(BINARY));
-        let local = dir.join(".local/bin/maprisma");
-        std::fs::write(&local, "#!/bin/sh\n").unwrap();
-        // not executable: the system one
-        assert_eq!(binary_for_home(Some(&dir)), PathBuf::from(BINARY));
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&local, std::fs::Permissions::from_mode(0o755)).unwrap();
-        assert_eq!(binary_for_home(Some(&dir)), local);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
     #[test]
     fn stop_never_signals_a_process_that_is_not_our_maprisma() {
         // as when Maprisma ended and the kernel gave its PID to another program
