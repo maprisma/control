@@ -173,7 +173,7 @@ impl Shot {
     }
 
     /// The card for this surface, shown above its content while a note is asked for.
-    pub fn card<'a, M: Clone + 'static>(&'a self, id: window::Id, wrap: fn(ShotMsg) -> M) -> Option<Element<'a, M>> {
+    pub fn card<'a, M: Clone + 'static>(&'a self, id: window::Id, skin: &str, wrap: fn(ShotMsg) -> M) -> Option<Element<'a, M>> {
         let mut body = column![].spacing(8);
         match &self.phase {
             Phase::Note { window, shown, text: note, .. } if *window == id => {
@@ -196,16 +196,21 @@ impl Shot {
             row![space::horizontal().width(Length::Fill), button::suggested(tr("Done").to_string()).on_press(wrap(ShotMsg::Done))]
                 .align_y(Alignment::Center),
         );
-        let card = container(body).padding(12).width(Length::Fill).class(theme::Container::custom(|t: &cosmic::Theme| {
-            let c = t.cosmic().primary(t.transparent);
-            let radius = t.cosmic().corner_radii.radius_m;
-            iced_container::Style {
-                text_color: Some(c.on.into()),
-                background: Some(Background::Color(c.base.into())),
-                border: Border { radius: radius.into(), width: 1.0, color: c.divider.into() },
-                ..Default::default()
-            }
-        }));
+        let style = if crate::skin::skin_style(skin).is_some() {
+            crate::skin::card_style(skin)
+        } else {
+            theme::Container::custom(|t: &cosmic::Theme| {
+                let c = t.cosmic().primary(t.transparent);
+                let radius = t.cosmic().corner_radii.radius_m;
+                iced_container::Style {
+                    text_color: Some(c.on.into()),
+                    background: Some(Background::Color(c.base.into())),
+                    border: Border { radius: radius.into(), width: 1.0, color: c.divider.into() },
+                    ..Default::default()
+                }
+            })
+        };
+        let card = container(body).padding(12).width(Length::Fill).class(style);
         Some(container(card).padding([8, 8, 0, 8]).into())
     }
 }

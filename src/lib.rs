@@ -1,4 +1,8 @@
+pub mod corners;
 pub mod i18n;
+#[allow(dead_code)] // the shared copy; not every part is used here
+pub mod look;
+pub mod skin;
 pub use i18n::{tr, trf, language_options};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;

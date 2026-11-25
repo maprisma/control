@@ -12,12 +12,6 @@ type Props = HashMap<String, OwnedValue>;
 type Layout = (i32, Props, Vec<OwnedValue>);
 type Pixmaps = Vec<(i32, i32, Vec<u8>)>;
 mod icon;
-#[allow(dead_code)]
-#[path = "../look.rs"]
-mod look;
-#[allow(dead_code)]
-#[path = "../corners.rs"]
-mod corners;
 struct State {
     colors: icon::Colors,
     running: Option<Running>,

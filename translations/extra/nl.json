@@ -34,5 +34,13 @@
   "Rounded ({0} px)": "Afgerond ({0} px)",
   "Open Maprisma Control": "Maprisma-bediening openen",
   "Settings": "Instellingen",
-  "Back": "Terug"
+  "Back": "Terug",
+  "App skin": "App-stijl",
+  "Visual accent for cards and borders; Native keeps your desktop theme untouched.": "Visueel accent voor kaarten en randen; Natief laat je bureaubladthema ongemoeid.",
+  "Native": "Natief",
+  "Synthwave": "Synthwave",
+  "Cozy": "Gezellig",
+  "Terminal": "Terminal",
+  "Disco": "Disco",
+  "Zen": "Zen"
 }

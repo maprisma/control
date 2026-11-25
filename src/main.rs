@@ -7,9 +7,6 @@
 // a Maprisma started from the launcher or a terminal.
 
 use maprisma_applet::*;
-mod corners;
-#[allow(dead_code)] // the shared copy; not every part is used here
-mod look;
 mod shot;
 mod shot_files;
 mod window_size;
@@ -46,10 +43,10 @@ fn main() -> cosmic::iced::Result {
     if std::env::args().any(|arg| arg == "--window") {
         let (width, height) = window_start_size();
         cosmic::app::run::<Control>(
-            cosmic::app::Settings::default().default_font(crate::look::default_font())
+            cosmic::app::Settings::default().default_font(look::default_font())
                 .size(cosmic::iced::Size::new(width, height)), true)
     } else {
-        crate::look::keep_fonts();
+        look::keep_fonts();
         cosmic::applet::run::<Control>(false)
     }
 }
@@ -167,12 +164,14 @@ struct Control {
     version: String,
     shot: Shot,
     corners: String, // Settings › Corners (corners.rs)
+    skin: String,    // Settings › App skin (skin.rs)
     screenshot_key: bool,
     resize: window_size::Debounce,
-    /// The settings page (Language, F12, Corners) is shown instead of the menu.
+    /// The settings page (Language, F12, Corners, App skin) is shown instead of the menu.
     settings_open: bool,
     language_open: bool,
     corners_open: bool,
+    skin_open: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -194,9 +193,11 @@ enum Message {
     Shot(ShotMsg),
     ScreenshotKey,
     Corners(usize),
+    Skin(String),
     ToggleSettings,
     ToggleLanguage,
     ToggleCorners,
+    ToggleSkin,
 }
 
 impl Control {
@@ -209,19 +210,21 @@ impl Control {
         settle_pending(&self.running, &mut self.pending);
     }
 
-    // Settings › F12 saves a screenshot (on unless `screenshot_key=false`) and › Corners, read
-    // again on every tick: another Control (window or applet) may have changed them.
+    // Settings › F12 saves a screenshot (on unless `screenshot_key=false`), › Corners and › App
+    // skin, read again on every tick: another Control (window or applet) may have changed them.
     fn read_look(&mut self) -> Task<Message> {
         self.screenshot_key = i18n::setting("screenshot_key").as_deref() != Some("false");
         let corners = corners::normalize(&i18n::setting("corners").unwrap_or_default()).to_string();
-        let mut restyle = corners != self.corners;
+        let skin = skin::normalize_skin(&i18n::setting(skin::SKIN_KEY).unwrap_or_default()).to_string();
+        let mut restyle = corners != self.corners || skin != self.skin;
         self.corners = corners;
+        self.skin = skin;
         corners::set_current(&self.corners);
         // The desktop's colours and corners (Maprisma Theme can change them any time);
         // look::refresh re-reads at most every 5 s.
         restyle |= look::refresh();
         if restyle && self.standalone {
-            return corners::set_app_theme(&self.corners);
+            return skin::apply_window_theme(&self.skin, &self.corners);
         }
         Task::none()
     }
@@ -273,13 +276,22 @@ impl Control {
             .width(Length::Fixed(8.0))
             .height(Length::Fixed(8.0))
             .class(fill(self.status(), corners::now().pill.min(4.0)));
+        let status_row = row![dot, dim(self.status_text())]
+            .spacing(8)
+            .align_y(Alignment::Center);
+        let status_el: Element<Message> = if skin::skin_style(&self.skin).is_some() {
+            container(status_row)
+                .padding([2, 8])
+                .class(skin::pill_style(&self.skin))
+                .into()
+        } else {
+            status_row.into()
+        };
         let header = row![
             icon::from_name(ICON).size(32).icon(),
             column![
                 text::title4(title),
-                row![dot, dim(self.status_text())]
-                    .spacing(8)
-                    .align_y(Alignment::Center)
+                status_el
             ]
             .spacing(4),
             space::horizontal().width(Length::Fill),
@@ -303,9 +315,10 @@ impl Control {
         let idle = self.pending.is_none();
         let running = self.running.is_some();
         let has_run = last_run().is_some();
-        let mut actions = column![divider::horizontal::default()];
+        let skinned = skin::skin_style(&self.skin).is_some();
+        let mut primary_actions = column![];
         if running {
-            actions = actions
+            primary_actions = primary_actions
                 .push(
                     menu_button(text::body(tr("Show / hide window")))
                         .on_press_maybe(idle.then_some(Message::ToggleWindow)),
@@ -315,7 +328,7 @@ impl Control {
                         .on_press_maybe(idle.then_some(Message::Stop)),
                 );
         } else {
-            actions = actions
+            primary_actions = primary_actions
                 .push(
                     menu_button(text::body(tr("Start Maprisma")))
                         .on_press_maybe(idle.then_some(Message::Start)),
@@ -327,20 +340,44 @@ impl Control {
                     ),
                 );
         }
-        actions = actions
-            .push(divider::horizontal::default())
-            .push(
-                menu_button(text::body(tr("Open notes of the last test")))
-                    .on_press_maybe(has_run.then_some(Message::OpenNotes)),
-            )
-            .push(menu_button(text::body(tr("Open the test folder"))).on_press(Message::OpenFolder));
+        let secondary_actions = column![
+            menu_button(text::body(tr("Open notes of the last test")))
+                .on_press_maybe(has_run.then_some(Message::OpenNotes)),
+            menu_button(text::body(tr("Open the test folder"))).on_press(Message::OpenFolder),
+        ];
+
+        let mut content = if skinned {
+            let header_card = container(info)
+                .width(Length::Fill)
+                .padding([12, 14])
+                .class(skin::card_style(&self.skin));
+            let primary_card = container(primary_actions)
+                .width(Length::Fill)
+                .padding([4, 4])
+                .class(skin::sub_card_style(&self.skin));
+            let secondary_card = container(secondary_actions)
+                .width(Length::Fill)
+                .padding([4, 4])
+                .class(skin::sub_card_style(&self.skin));
+            column![header_card, primary_card, secondary_card]
+                .spacing(8)
+                .padding([10, 12, 10, 12])
+        } else {
+            let actions = column![
+                divider::horizontal::default(),
+                primary_actions,
+                divider::horizontal::default(),
+                secondary_actions,
+            ];
+            column![padded_control(info).padding([12, 16]), actions]
+                .padding([0, 0, 8, 0])
+        };
 
         if let Some(error) = &self.error {
-            actions = actions.push(padded_control(text::body(error.clone()).class(theme::Text::Custom(error_text))));
+            content = content.push(padded_control(text::body(error.clone()).class(theme::Text::Custom(error_text))));
         }
-        column![padded_control(info).padding([12, 16]), actions]
+        content
             .width(self.width())
-            .padding([0, 0, 8, 0])
             .into()
     }
 
@@ -359,14 +396,14 @@ impl Control {
                 .on_press(message)
                 .into()
         };
-        let setting = |label: String, control: Element<'static, Message>| {
-            padded_control(row![text::body(label), space::horizontal().width(Length::Fill), control].spacing(12).align_y(Alignment::Center))
+        let setting = |words: Element<'static, Message>, control: Element<'static, Message>| {
+            padded_control(row![container(words).width(Length::Fill), control].spacing(12).align_y(Alignment::Center))
         };
         let mut page = column![padded_control(header), divider::horizontal::default()];
         let languages = language_options();
         let preference = i18n::preference();
         let current = i18n::CODES.iter().position(|c| *c == preference).unwrap_or(0);
-        page = page.push(setting(tr("Language"), choice(languages[current].clone(), self.language_open, Message::ToggleLanguage)));
+        page = page.push(setting(text::body(tr("Language")).into(), choice(languages[current].clone(), self.language_open, Message::ToggleLanguage)));
         if self.language_open {
             for (index, label) in languages.into_iter().enumerate() {
                 let label = if index == current { format!("✓ {label}") } else { label };
@@ -374,7 +411,7 @@ impl Control {
             }
         }
         page = page.push(setting(
-            tr("F12 saves a screenshot"),
+            text::body(tr("F12 saves a screenshot")).into(),
             cosmic::widget::toggler(self.screenshot_key).on_toggle(|_| Message::ScreenshotKey).into(),
         ));
         let desktop = corners::desktop_radius().round().to_string();
@@ -385,11 +422,35 @@ impl Control {
             tr("Square"),
         ];
         let current = corners::CHOICES.iter().position(|c| *c == self.corners).unwrap_or(0);
-        page = page.push(setting(tr("Corners"), choice(labels[current].clone(), self.corners_open, Message::ToggleCorners)));
+        page = page.push(setting(text::body(tr("Corners")).into(), choice(labels[current].clone(), self.corners_open, Message::ToggleCorners)));
         if self.corners_open {
             for (index, label) in labels.into_iter().enumerate() {
                 let label = if index == current { format!("✓ {label}") } else { label };
                 page = page.push(menu_button(text::body(label)).on_press(Message::Corners(index)));
+            }
+        }
+        page = page.push(setting(
+            column![
+                text::body(tr("App skin")),
+                dim(tr("Visual accent for cards and borders; Native keeps your desktop theme untouched.")),
+            ]
+            .spacing(2)
+            .into(),
+            choice(skin::skin_label(&self.skin), self.skin_open, Message::ToggleSkin),
+        ));
+        if self.skin_open {
+            for skin_id in skin::SKINS {
+                let name = skin::skin_label(skin_id);
+                let label = if self.skin == skin_id { format!("✓ {name}") } else { name };
+                let row_inner: Element<Message> = if let Some(st) = skin::skin_style(skin_id) {
+                    row![skin::swatch(st.accent, 10.0), text::body(label)]
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .into()
+                } else {
+                    text::body(label).into()
+                };
+                page = page.push(menu_button(row_inner).on_press(Message::Skin(skin_id.into())));
             }
         }
         if let Some(error) = &self.error {
@@ -410,7 +471,7 @@ impl Control {
 
     // The F12 note card above the menu while it is asked for.
     fn with_card<'a>(&'a self, id: window::Id, content: Element<'a, Message>) -> Element<'a, Message> {
-        match self.shot.card(id, Message::Shot) {
+        match self.shot.card(id, &self.skin, Message::Shot) {
             Some(card) => column![card, content].width(self.width()).into(),
             None => content,
         }
@@ -439,6 +500,7 @@ impl Control {
         self.settings_open = false;
         self.language_open = false;
         self.corners_open = false;
+        self.skin_open = false;
     }
 
     fn close_popup(&mut self) -> Task<Message> {
@@ -455,11 +517,17 @@ impl Control {
 
 /// COSMIC `--window` with chosen corners: the app theme is a Custom copy, and libcosmic applies
 /// system theme changes only to a System theme. So the new system theme ([base]) gets the chosen
-/// corners again. None when nothing is to do: an applet popup (it themes per view), "desktop"
-/// corners (the System theme follows by itself) or a desktop whose colours look.rs reads
-/// ([desktop_look]: KDE/Hyprland, re-read on the tick).
-fn corner_theme_on(base: &cosmic::cosmic_theme::Theme, corners_setting: &str, standalone: bool, desktop_look: bool) -> Option<cosmic::Theme> {
-    if !standalone || desktop_look || corners::normalize(corners_setting) == "desktop" {
+/// corners again. None when nothing is to do: an applet popup (it themes per view), a non-native
+/// skin (keeps its own palette), "desktop" corners (the System theme follows by itself) or a
+/// desktop whose colours look.rs reads ([desktop_look]: KDE/Hyprland, re-read on the tick).
+fn corner_theme_on(
+    base: &cosmic::cosmic_theme::Theme,
+    corners_setting: &str,
+    skin_setting: &str,
+    standalone: bool,
+    desktop_look: bool,
+) -> Option<cosmic::Theme> {
+    if !standalone || desktop_look || skin::skin_style(skin_setting).is_some() || corners::normalize(corners_setting) == "desktop" {
         return None;
     }
     let mut custom = base.clone();
@@ -471,7 +539,15 @@ fn corner_theme_on(base: &cosmic::cosmic_theme::Theme, corners_setting: &str, st
 
 impl Control {
     fn follow_system_theme(&self, base: &cosmic::cosmic_theme::Theme) -> Task<Message> {
-        match corner_theme_on(base, &self.corners, self.standalone, look::theme().is_some()) {
+        let _ = corners::system_theme_update::<Message>(&self.corners, base, false);
+        if skin::skin_style(&self.skin).is_some() {
+            return if self.standalone {
+                skin::apply_window_theme(&self.skin, &self.corners)
+            } else {
+                Task::none()
+            };
+        }
+        match corner_theme_on(base, &self.corners, &self.skin, self.standalone, look::theme().is_some()) {
             Some(theme) => cosmic::command::set_theme(theme),
             None => Task::none(),
         }
@@ -494,7 +570,7 @@ impl cosmic::Application for Control {
 
     fn init(core: Core, standalone: bool) -> (Self, Task<Message>) {
         let mut core = core;
-        crate::look::solid(&mut core);
+        look::solid(&mut core);
         let mut control = Self {
             core,
             standalone,
@@ -514,8 +590,11 @@ impl cosmic::Application for Control {
         let task = if standalone {
             control.set_header_title(tr("Maprisma Control"));
             let id = control.core.main_window_id().unwrap();
-            // The desktop's theme for the whole window (title bar too), see look.rs.
-            Task::batch([control.set_window_title(tr("Maprisma Control"), id), corners::set_app_theme(&control.corners)])
+            // The desktop's or skin's theme for the whole window (title bar too), see look.rs.
+            Task::batch([
+                control.set_window_title(tr("Maprisma Control"), id),
+                skin::apply_window_theme(&control.skin, &control.corners),
+            ])
         } else { Task::none() };
         (control, Task::batch([look, task]))
     }
@@ -577,10 +656,17 @@ impl cosmic::Application for Control {
             Message::ToggleLanguage => {
                 self.language_open = !self.language_open;
                 self.corners_open = false;
+                self.skin_open = false;
             }
             Message::ToggleCorners => {
                 self.corners_open = !self.corners_open;
                 self.language_open = false;
+                self.skin_open = false;
+            }
+            Message::ToggleSkin => {
+                self.skin_open = !self.skin_open;
+                self.language_open = false;
+                self.corners_open = false;
             }
             Message::Language(index) => {
                 self.language_open = false;
@@ -599,13 +685,19 @@ impl cosmic::Application for Control {
             Message::Shot(ShotMsg::Escape(_)) => {}
             Message::Escape(id) => {
                 let shown = self.shot_target(id);
-                match esc_step(shown, self.shot.showing(id), self.language_open || self.corners_open, self.settings_open) {
+                match esc_step(
+                    shown,
+                    self.shot.showing(id),
+                    self.language_open || self.corners_open || self.skin_open,
+                    self.settings_open,
+                ) {
                     EscStep::Note => {
                         return self.shot.update(ShotMsg::Escape(id), self.screenshot_key, true, Message::Shot);
                     }
                     EscStep::Menus => {
                         self.language_open = false;
                         self.corners_open = false;
+                        self.skin_open = false;
                     }
                     EscStep::Back => self.close_settings(),
                     // Like the window's own close; the popup like a click on the icon.
@@ -636,6 +728,13 @@ impl cosmic::Application for Control {
                 self.corners_open = false;
                 let corners = corners::CHOICES.get(index).copied().unwrap_or("desktop");
                 self.error = i18n::set_setting("corners", corners).err().map(|error| error.to_string());
+                return self.read_look();
+            }
+            Message::Skin(choice) => {
+                self.skin_open = false;
+                let choice = skin::normalize_skin(&choice);
+                let value = (choice != "native").then_some(choice);
+                self.error = i18n::set_optional_setting(skin::SKIN_KEY, value).err().map(|error| error.to_string());
                 return self.read_look();
             }
             Message::Rectangle(update) => match update {
@@ -719,10 +818,10 @@ impl cosmic::Application for Control {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        crate::look::keep_fonts();
+        look::keep_fonts();
         if self.standalone {
             let id = self.core.main_window_id().unwrap_or(window::Id::RESERVED);
-            return corners::apply_window(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.page())));
+            return skin::apply_window(&self.skin, &self.corners, cosmic::widget::scrollable(self.with_card(id, self.page())));
         }
         let horizontal = matches!(
             self.core.applet.anchor,
@@ -747,11 +846,11 @@ impl cosmic::Application for Control {
     }
 
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
-        crate::look::keep_fonts();
+        look::keep_fonts();
         if self.standalone {
-            return corners::apply_window(&self.corners, cosmic::widget::scrollable(self.with_card(id, self.page())));
+            return skin::apply_window(&self.skin, &self.corners, cosmic::widget::scrollable(self.with_card(id, self.page())));
         }
-        corners::apply(&self.corners, self.core.applet.popup_container(self.with_card(id, self.page())))
+        skin::apply_popup(&self.skin, &self.corners, &self.core, self.with_card(id, self.page()))
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
@@ -786,16 +885,17 @@ mod tests {
             cosmic::cosmic_theme::palette::Srgba::new(0.0, 0.0, 0.0, 1.0),
             cosmic::cosmic_theme::palette::Srgba::new(0.0, 0.0, 0.0, 1.0),
         );
-        let theme = corner_theme_on(&base, "rounded", true, false).unwrap();
+        let theme = corner_theme_on(&base, "rounded", "native", true, false).unwrap();
         let cosmic = theme.cosmic();
         assert_eq!(cosmic.corner_radii.radius_m, [12.0; 4]);
         // the new system colours, not the old custom copy
         assert_eq!(cosmic.accent.base, base.accent.base);
         assert!(matches!(theme.theme_type, cosmic::theme::ThemeType::Custom(_)));
-        // nothing to do: applet popup, "desktop" corners, or KDE/Hyprland colours from look.rs
-        assert!(corner_theme_on(&base, "rounded", false, false).is_none());
-        assert!(corner_theme_on(&base, "desktop", true, false).is_none());
-        assert!(corner_theme_on(&base, "square", true, true).is_none());
+        // nothing to do: applet popup, non-native skin, "desktop" corners, or KDE/Hyprland colours from look.rs
+        assert!(corner_theme_on(&base, "rounded", "native", false, false).is_none());
+        assert!(corner_theme_on(&base, "rounded", "synthwave", true, false).is_none());
+        assert!(corner_theme_on(&base, "desktop", "native", true, false).is_none());
+        assert!(corner_theme_on(&base, "square", "native", true, true).is_none());
     }
 
     #[test]
