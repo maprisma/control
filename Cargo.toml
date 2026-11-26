@@ -13,9 +13,9 @@ path = "src/tray/main.rs"
 zbus = { version = "=5.19.0", default-features = false, features = ["tokio"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 libc = "0.2"
-png = "0.18"
 resvg = "=0.45.1"
 serde_json = "1"
+maprisma-kit = { git = "https://github.com/maprisma/maprisma-kit-rs", tag = "v0.1.0" }
 
 [dependencies.libcosmic]
 # pop-os/libcosmic 95236a9 (what COSMIC's own applets 1.11 are built against) plus one fix:

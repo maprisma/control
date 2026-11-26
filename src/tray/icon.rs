@@ -1,5 +1,6 @@
 //! Host-independent SNI icons. IconName is empty so hosts use these ARGB pixmaps.
-use super::{Pixmaps, look};
+use super::Pixmaps;
+use maprisma_kit::look;
 use resvg::{tiny_skia, usvg};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

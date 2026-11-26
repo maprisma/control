@@ -7,10 +7,7 @@
 // a Maprisma started from the launcher or a terminal.
 
 use maprisma_applet::*;
-mod shot;
-mod shot_files;
-mod window_size;
-use shot::{Shot, ShotMsg};
+use maprisma_kit::{AppInfo, corners, look, shot, window_size};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -36,8 +33,9 @@ const ICON: &str = "com.maprisma.Maprisma";
 const BAR_ICON: &str = "io.github.ubruckhaus.CosmicMaprisma-symbolic";
 const POPUP_WIDTH: f32 = 340.0;
 /// F12's folder in ~/Pictures and (as a slug) its file names.
-const SHOT_FOLDER: &str = "Maprisma Control";
+const SHOT_APP: AppInfo = AppInfo::new(APP_ID, "Maprisma Control");
 static AUTOSIZE_ID: LazyLock<Id> = LazyLock::new(|| Id::new("maprisma-autosize"));
+static NOTE_ID: LazyLock<Id> = LazyLock::new(Id::unique);
 
 fn main() -> cosmic::iced::Result {
     if std::env::args().any(|arg| arg == "--window") {
@@ -162,7 +160,8 @@ struct Control {
     running: Option<Running>,
     pending: Option<(Pending, Instant)>,
     version: String,
-    shot: Shot,
+    shot: shot::Phase,
+    shot_window: Option<window::Id>,
     corners: String, // Settings › Corners (corners.rs)
     skin: String,    // Settings › App skin (skin.rs)
     screenshot_key: bool,
@@ -190,7 +189,12 @@ enum Message {
     OpenFolder,
     OpenNotes,
     Language(usize),
-    Shot(ShotMsg),
+    ShotKey(window::Id),
+    ShotCaptured(window::Id, window::Screenshot),
+    ShotSaved(window::Id, Result<shot::Saved, String>),
+    NoteInput(String),
+    NoteDone,
+    NoteSaved(window::Id, Result<(), String>),
     ScreenshotKey,
     Corners(usize),
     Skin(String),
@@ -469,9 +473,91 @@ impl Control {
         if self.standalone { Length::Fill } else { Length::Fixed(POPUP_WIDTH) }
     }
 
+    fn shot_showing(&self, id: window::Id) -> bool {
+        self.shot_window == Some(id) && self.shot.open()
+    }
+
+    fn finish_note(&mut self, keep: bool) -> Task<Message> {
+        let win = self.shot_window;
+        match std::mem::take(&mut self.shot) {
+            shot::Phase::Note { path, text, .. } => {
+                if keep && shot::note_text(&text).is_some() {
+                    self.shot = shot::Phase::Noting;
+                    let id = win.unwrap_or(window::Id::RESERVED);
+                    return off_thread(
+                        move || {
+                            shot::save_note_for(&SHOT_APP, &path, &text)
+                                .map(|_| ())
+                                .map_err(|e| e.to_string())
+                        },
+                        move |result| Message::NoteSaved(id, result),
+                    );
+                }
+                self.shot_window = None;
+            }
+            shot::Phase::Error(_) => self.shot_window = None,
+            other => self.shot = other,
+        }
+        Task::none()
+    }
+
+    fn shot_closed(&mut self, id: window::Id, exiting: bool) -> Task<Message> {
+        if self.shot_window != Some(id) {
+            return Task::none();
+        }
+        match &self.shot {
+            shot::Phase::Busy => {
+                self.shot = shot::Phase::Idle;
+                self.shot_window = None;
+                Task::none()
+            }
+            shot::Phase::Note { .. } => {
+                if exiting {
+                    if let shot::Phase::Note { path, text, .. } = std::mem::take(&mut self.shot) {
+                        let _ = shot::save_note_for(&SHOT_APP, &path, &text);
+                    }
+                    self.shot_window = None;
+                    Task::none()
+                } else {
+                    self.finish_note(true)
+                }
+            }
+            shot::Phase::Error(_) => {
+                self.shot = shot::Phase::Idle;
+                self.shot_window = None;
+                Task::none()
+            }
+            shot::Phase::Idle | shot::Phase::Noting => Task::none(),
+        }
+    }
+
     // The F12 note card above the menu while it is asked for.
     fn with_card<'a>(&'a self, id: window::Id, content: Element<'a, Message>) -> Element<'a, Message> {
-        match self.shot.card(id, &self.skin, Message::Shot) {
+        if self.shot_window != Some(id) {
+            return content;
+        }
+        let labels = shot::ShotLabels {
+            saved_heading: tr("Screenshot saved"),
+            saved_as_template: tr("Saved as {0}"),
+            note_placeholder: tr("What is wrong? (optional)"),
+            done_button: tr("Done"),
+            save_error_template: tr("The screenshot could not be saved: {0}"),
+            note_error_template: tr("The note could not be saved: {0}"),
+        };
+        let style = if skin::skin_style(&self.skin).is_some() {
+            skin::card_style(&self.skin)
+        } else {
+            theme::Container::Card
+        };
+        match shot::note_overlay(
+            &self.shot,
+            NOTE_ID.clone(),
+            &labels,
+            style,
+            Length::Fill,
+            Message::NoteInput,
+            Message::NoteDone,
+        ) {
             Some(card) => column![card, content].width(self.width()).into(),
             None => content,
         }
@@ -506,13 +592,29 @@ impl Control {
     fn close_popup(&mut self) -> Task<Message> {
         match self.popup.take() {
             Some(popup) => {
-                self.shot.closed(popup);
+                let shot_task = self.shot_closed(popup, false);
                 self.close_settings();
-                destroy_popup(popup)
+                Task::batch([shot_task, destroy_popup(popup)])
             }
             None => Task::none(),
         }
     }
+}
+
+fn off_thread<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+    wrap: impl FnOnce(Result<T, String>) -> Message + Send + 'static,
+) -> Task<Message> {
+    cosmic::task::future(async move {
+        let (tx, rx) = cosmic::iced::futures::channel::oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(work());
+        });
+        let result = rx
+            .await
+            .unwrap_or_else(|_| Err("the picture could not be written".into()));
+        wrap(result)
+    })
 }
 
 /// COSMIC `--window` with chosen corners: the app theme is a Custom copy, and libcosmic applies
@@ -575,7 +677,6 @@ impl cosmic::Application for Control {
             core,
             standalone,
             version: version(),
-            shot: Shot::new(SHOT_FOLDER),
             // Debug builds only: start on the settings page (for off-screen screenshots).
             settings_open: cfg!(debug_assertions) && std::env::var("MAPRISMA_SHOT_PAGE").as_deref() == Ok("settings"),
             ..Default::default()
@@ -633,13 +734,28 @@ impl cosmic::Application for Control {
         Subscription::batch(vec![
             rectangle_tracker_subscription(0).map(|update| Message::Rectangle(update.1)),
             cosmic::iced::time::every(every).map(|_| Message::Tick),
-            Shot::subscription().map(Message::Shot),
-            // Esc (esc_step); not one a widget took for itself.
+            // F12 (no modifiers) in the popup or window; Esc closes the innermost thing (esc_step).
             cosmic::iced::event::listen_with(|event, status, id| match event {
                 cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
-                    key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
+                    key,
+                    modifiers,
                     ..
-                }) if status == cosmic::iced::event::Status::Ignored => Some(Message::Escape(id)),
+                }) => {
+                    if shot::is_shot_key(&key, modifiers) {
+                        Some(Message::ShotKey(id))
+                    } else if status == cosmic::iced::event::Status::Ignored
+                        && matches!(
+                            key,
+                            cosmic::iced::keyboard::Key::Named(
+                                cosmic::iced::keyboard::key::Named::Escape
+                            )
+                        )
+                    {
+                        Some(Message::Escape(id))
+                    } else {
+                        None
+                    }
+                }
                 _ => None,
             }),
             save_size,
@@ -681,19 +797,15 @@ impl cosmic::Application for Control {
                 self.refresh();
                 return self.read_look();
             }
-            // Esc goes through esc_step (Message::Escape), which hands it to the note card.
-            Message::Shot(ShotMsg::Escape(_)) => {}
             Message::Escape(id) => {
                 let shown = self.shot_target(id);
                 match esc_step(
                     shown,
-                    self.shot.showing(id),
+                    self.shot_showing(id),
                     self.language_open || self.corners_open || self.skin_open,
                     self.settings_open,
                 ) {
-                    EscStep::Note => {
-                        return self.shot.update(ShotMsg::Escape(id), self.screenshot_key, true, Message::Shot);
-                    }
+                    EscStep::Note => return self.finish_note(false),
                     EscStep::Menus => {
                         self.language_open = false;
                         self.corners_open = false;
@@ -710,13 +822,60 @@ impl cosmic::Application for Control {
                 }
             }
             Message::SaveSize => self.save_size(false),
-            Message::Shot(message) => {
-                let ours = match &message {
-                    ShotMsg::Key(id) => self.shot_target(*id),
-                    _ => true,
-                };
-                return self.shot.update(message, self.screenshot_key, ours, Message::Shot);
+            Message::ShotKey(id) => {
+                if self.screenshot_key && self.shot_target(id) && self.shot == shot::Phase::Idle {
+                    self.shot = shot::Phase::Busy;
+                    self.shot_window = Some(id);
+                    return window::screenshot(id)
+                        .map(move |picture| cosmic::Action::App(Message::ShotCaptured(id, picture)));
+                }
             }
+            Message::ShotCaptured(id, picture) => {
+                if self.shot == shot::Phase::Busy && self.shot_window == Some(id) {
+                    let (width, height) = (picture.size.width, picture.size.height);
+                    return off_thread(
+                        move || shot::save_screenshot_for(&SHOT_APP, &picture.rgba, width, height),
+                        move |result| Message::ShotSaved(id, result),
+                    );
+                }
+            }
+            Message::ShotSaved(id, result) => {
+                if self.shot == shot::Phase::Busy && self.shot_window == Some(id) {
+                    self.shot = match result {
+                        Ok(saved) => shot::Phase::Note {
+                            path: saved.path,
+                            shown: saved.shown,
+                            text: String::new(),
+                        },
+                        Err(reason) => shot::Phase::Error(
+                            tr("The screenshot could not be saved: {0}").replace("{0}", &reason),
+                        ),
+                    };
+                    if matches!(self.shot, shot::Phase::Note { .. }) {
+                        return cosmic::widget::text_input::focus(NOTE_ID.clone());
+                    }
+                }
+            }
+            Message::NoteInput(value) => {
+                if let shot::Phase::Note { text, .. } = &mut self.shot {
+                    *text = value.chars().take(shot::NOTE_LIMIT).collect();
+                }
+            }
+            Message::NoteDone => return self.finish_note(true),
+            Message::NoteSaved(id, result) => match result {
+                Ok(()) => {
+                    if self.shot == shot::Phase::Noting {
+                        self.shot = shot::Phase::Idle;
+                        self.shot_window = None;
+                    }
+                }
+                Err(reason) => {
+                    self.shot_window = Some(id);
+                    self.shot = shot::Phase::Error(
+                        tr("The note could not be saved: {0}").replace("{0}", &reason),
+                    );
+                }
+            },
             Message::ScreenshotKey => {
                 let on = !self.screenshot_key;
                 self.error = i18n::set_setting("screenshot_key", if on { "true" } else { "false" })
@@ -742,7 +901,7 @@ impl cosmic::Application for Control {
                 RectangleUpdate::Init(tracker) => self.tracker = Some(tracker),
             },
             Message::CloseRequested(id) => {
-                self.shot.closed(id);
+                let shot_task = self.shot_closed(id, self.standalone);
                 if self.standalone {
                     self.save_size(true);
                 }
@@ -750,6 +909,7 @@ impl cosmic::Application for Control {
                     self.popup = None;
                     self.close_settings();
                 }
+                return shot_task;
             }
             Message::TogglePopup => {
                 if self.popup.is_some() {
